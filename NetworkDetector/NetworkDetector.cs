@@ -9,6 +9,9 @@ using Microsoft.Win32;
 using System.Management;
 using System.Net.Http;
 using System.IO.Compression;
+using Microsoft.VisualBasic;
+using System.DirectoryServices;
+using WUApiLib;
 
 namespace NetworkDetector
 {
@@ -111,6 +114,8 @@ namespace NetworkDetector
                 string ramInfo = GetRamInfo();
                 string windowsOS = GetWindowsOS();
                 string buildNumber = GetBuildNumber();
+                string pendingUpdates = await GetPendingUpdates();
+
 
                 // Ensure the handle is created before invoking
                 if (this.IsHandleCreated)
@@ -122,6 +127,7 @@ namespace NetworkDetector
                         ramInfoTextBox.Text = ramInfo;
                         windowsOsTextBox.Text = windowsOS;
                         buildNumberTextBox.Text = buildNumber;
+                        pendingUpdatesTextBox.Text = pendingUpdates;
                     }));
                 }
                 logTextBox.Clear();
@@ -146,12 +152,15 @@ namespace NetworkDetector
 
                 string storageInfo = GetStorageInfo();
 
+                
+
                 // Update the text boxes with the dynamic data
                 Invoke(new System.Action(() =>
                 {
                     wanIpTextBox.Text = wanIp;
                     ispTextBox.Text = isp;
                     storageInfoTextBox.Text = storageInfo;
+                    
                 }));
 
                 logTextBox.AppendText($"Dynamic Data Gathered: {wanIp} | {isp} | {storageInfo}\r\n");
@@ -227,6 +236,44 @@ namespace NetworkDetector
             {
                 logTextBox.AppendText($"Exception: {ex.Message}\r\n");
             }
+        }
+
+        private async Task<string> GetPendingUpdates()
+        {
+            StringBuilder pendingUpdates = new StringBuilder();
+
+            try
+            {
+                // Create the Update Session
+                UpdateSession updateSession = new UpdateSession();
+
+                // Create an Update Searcher
+                IUpdateSearcher updateSearcher = updateSession.CreateUpdateSearcher();
+
+                // Search for updates that are not installed and not hidden
+                ISearchResult searchResult = updateSearcher.Search("IsInstalled=0 AND IsHidden=0");
+
+                logTextBox.AppendText($"Found {searchResult.Updates.Count} pending updates.\r\n");
+
+                if (searchResult.Updates.Count == 0)
+                {
+                    pendingUpdates.AppendLine("No pending updates.");
+                }
+                else
+                {
+                    foreach (IUpdate update in searchResult.Updates)
+                    {
+                        pendingUpdates.AppendLine(update.Title);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                logTextBox.AppendText($"Exception when getting pending updates: {ex.Message}\r\n");
+                pendingUpdates.AppendLine("Error retrieving updates.");
+            }
+
+            return pendingUpdates.ToString();
         }
 
         private async Task<(string, string)> GetWanIpAndIspAsync()
