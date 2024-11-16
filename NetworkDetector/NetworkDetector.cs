@@ -12,6 +12,7 @@ using System.IO.Compression;
 using Microsoft.VisualBasic;
 using System.DirectoryServices;
 using WUApiLib;
+using System.Runtime.InteropServices;
 
 namespace NetworkDetector
 {
@@ -92,16 +93,14 @@ namespace NetworkDetector
             //this.Load += new System.EventHandler(this.button7_Click);
             this.Load += new System.EventHandler(this.NetworkDetector_Load);
 
-            
+            StaticSpecs();
         }
 
         private async void NetworkDetector_Load(object sender, EventArgs e)
         {
             string VersionNumber = Version.Text;
             VersionMenuItem.Text = $"Version Number {VersionNumber}";
-            this.Text = $"Network Manager {VersionNumber}";
-
-            StaticSpecs();
+            this.Text = $"Network Manager {VersionNumber}";            
         }
 
         #region SendingData
@@ -109,33 +108,41 @@ namespace NetworkDetector
         {
             try
             {
+                // Gather static data
                 string machineName = Environment.MachineName;
                 string cpuInfo = GetCPUInfo();
                 string ramInfo = GetRamInfo();
                 string windowsOS = GetWindowsOS();
                 string buildNumber = GetBuildNumber();
-                string pendingUpdates = await GetPendingUpdates();
 
+                // Update UI with static data immediately
+                machineNameTextBox.Text = machineName;
+                cpuInfoTextBox.Text = cpuInfo;
+                ramInfoTextBox.Text = ramInfo;
+                windowsOsTextBox.Text = windowsOS;
+                buildNumberTextBox.Text = buildNumber;
 
-                // Ensure the handle is created before invoking
-                if (this.IsHandleCreated)
-                {
-                    this.Invoke(new System.Action(() =>
-                    {
-                        machineNameTextBox.Text = machineName;
-                        cpuInfoTextBox.Text = cpuInfo;
-                        ramInfoTextBox.Text = ramInfo;
-                        windowsOsTextBox.Text = windowsOS;
-                        buildNumberTextBox.Text = buildNumber;
-                        pendingUpdatesTextBox.Text = pendingUpdates;
-                    }));
-                }
                 logTextBox.Clear();
-                logTextBox.AppendText($"Static Data Gathered: {machineName} | {cpuInfo} | {ramInfo} | {windowsOS} | {buildNumber}\r\n");                
+                logTextBox.AppendText($"Static Data Gathered: {machineName} | {cpuInfo} | {ramInfo} | {windowsOS} | {buildNumber}\r\n");
+
+                string latestFileDate = await GetLatestSharepointFileDateAsync();
+
+                latestFileDateTextBox.Text = latestFileDate;
+
+                // Fetch pending updates asynchronously
+                string pendingUpdates = await System.Threading.Tasks.Task.Run(() => GetPendingUpdates());
+
+                // Update the UI with pending updates
+                pendingUpdatesTextBox.Text = pendingUpdates;
+
+                logTextBox.AppendText($"Pending Updates: {pendingUpdates}\r\n");
+
+                                
+
             }
             catch (Exception ex)
             {
-                logTextBox.AppendText($"Exception: {ex.Message}\r\n");
+                logTextBox.AppendText($"Exception in StaticSpecs: {ex.Message}\r\n");
             }
         }
 
@@ -195,8 +202,10 @@ namespace NetworkDetector
             string windowsOS = windowsOsTextBox.Text;
             string buildNumber = buildNumberTextBox.Text;
             string version = Version.Text;
+            string pendingUpdates = pendingUpdatesTextBox.Text;
+            string lastsharepointfile = latestFileDateTextBox.Text;            
 
-            string gatheredData = $"(MainData)|{machineName}|{wanIp}|{isp}|{cpuInfo}|{ramInfo}|{storageInfo}|{windowsOS}|{buildNumber}|{version}";
+            string gatheredData = $"(MainData)|{machineName}|{wanIp}|{isp}|{cpuInfo}|{ramInfo}|{storageInfo}|{windowsOS}|{buildNumber}|{version}|{pendingUpdates}|{lastsharepointfile}";
 
             if (string.IsNullOrEmpty(gatheredData))
             {
@@ -238,26 +247,128 @@ namespace NetworkDetector
             }
         }
 
-        private async Task<string> GetPendingUpdates()
+        private async Task<string> GetLatestSharepointFileDateAsync()
+        {
+            return await System.Threading.Tasks.Task.Run(() =>
+            {
+                try
+                {
+                    // Step 1: Locate OneDrive directories dynamically
+                    List<string> oneDrivePaths = new List<string>();
+
+                    // Method 1: Use the "OneDrive" environment variable
+                    string oneDriveEnv = Environment.GetEnvironmentVariable("OneDrive");
+                    if (!string.IsNullOrEmpty(oneDriveEnv) && Directory.Exists(oneDriveEnv))
+                    {
+                        oneDrivePaths.Add(oneDriveEnv);
+                    }
+
+                    // Method 2: Search for directories starting with "OneDrive" in the user profile
+                    string userProfilePath = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                    var foundOneDriveDirs = Directory.GetDirectories(userProfilePath, "OneDrive*", SearchOption.TopDirectoryOnly);
+                    foreach (var dir in foundOneDriveDirs)
+                    {
+                        if (Directory.Exists(dir) && !oneDrivePaths.Contains(dir))
+                        {
+                            oneDrivePaths.Add(dir);
+                        }
+                    }
+
+                    if (oneDrivePaths.Count == 0)
+                    {
+                        return "OneDrive folder not found.";
+                    }
+
+                    // Step 2: Search for Sharepoint folders within OneDrive directories
+                    List<string> sharepointFolders = new List<string>();
+
+                    foreach (var oneDrivePath in oneDrivePaths)
+                    {
+                        // Get all directories that contain "sharepoint" (case-insensitive)
+                        var folders = Directory.GetDirectories(oneDrivePath, "*sharepoint*", SearchOption.AllDirectories)
+                                               .Where(dir => dir.IndexOf("sharepoint", StringComparison.OrdinalIgnoreCase) >= 0);
+
+                        foreach (var folder in folders)
+                        {
+                            sharepointFolders.Add(folder);
+                        }
+                    }
+
+                    // Remove duplicates
+                    sharepointFolders = sharepointFolders.Distinct().ToList();
+
+                    if (sharepointFolders.Count == 0)
+                    {
+                        return "No Sharepoint folders found in OneDrive directories.";
+                    }
+
+                    // Step 3: Find the latest file across all Sharepoint folders
+                    FileInfo latestFile = null;
+
+                    foreach (var sharepointFolder in sharepointFolders)
+                    {
+                        // Get all files in the current Sharepoint folder, including subdirectories
+                        var allFiles = Directory.GetFiles(sharepointFolder, "*.*", SearchOption.AllDirectories);
+
+                        if (allFiles.Length == 0)
+                        {
+                            continue; // No files in this Sharepoint folder
+                        }
+
+                        // Find the latest file based on LastWriteTime
+                        var currentLatestFile = allFiles
+                            .Select(f => new FileInfo(f))
+                            .OrderByDescending(fi => fi.LastWriteTime)
+                            .FirstOrDefault();
+
+                        if (currentLatestFile != null)
+                        {
+                            if (latestFile == null || currentLatestFile.LastWriteTime > latestFile.LastWriteTime)
+                            {
+                                latestFile = currentLatestFile;
+                            }
+                        }
+                    }
+
+                    if (latestFile != null)
+                    {
+                        // Return only the date in dd/MM/yyyy format
+                        return latestFile.LastWriteTime.ToString("dd/MM/yyyy");
+                    }
+                    else
+                    {
+                        return "Unable to determine the latest file in Sharepoint folders.";
+                    }
+                }
+                catch (Exception ex)
+                {
+                    return $"Error retrieving latest Sharepoint file date: {ex.Message}";
+                }
+            });
+        }
+
+        private string GetPendingUpdates()
         {
             StringBuilder pendingUpdates = new StringBuilder();
+            UpdateSession updateSession = null;
+            IUpdateSearcher updateSearcher = null;
 
             try
             {
                 // Create the Update Session
-                UpdateSession updateSession = new UpdateSession();
+                updateSession = new UpdateSession();
 
                 // Create an Update Searcher
-                IUpdateSearcher updateSearcher = updateSession.CreateUpdateSearcher();
+                updateSearcher = updateSession.CreateUpdateSearcher();
 
                 // Search for updates that are not installed and not hidden
                 ISearchResult searchResult = updateSearcher.Search("IsInstalled=0 AND IsHidden=0");
 
-                logTextBox.AppendText($"Found {searchResult.Updates.Count} pending updates.\r\n");
+                //pendingUpdates.AppendLine($"Found {searchResult.Updates.Count} pending updates.");
 
                 if (searchResult.Updates.Count == 0)
                 {
-                    pendingUpdates.AppendLine("No pending updates.");
+                    pendingUpdates.AppendLine("None");
                 }
                 else
                 {
@@ -269,8 +380,27 @@ namespace NetworkDetector
             }
             catch (Exception ex)
             {
-                logTextBox.AppendText($"Exception when getting pending updates: {ex.Message}\r\n");
-                pendingUpdates.AppendLine("Error retrieving updates.");
+                pendingUpdates.AppendLine($"Error retrieving updates: {ex.Message}");
+            }
+            finally
+            {
+                // Release the UpdateSearcher COM object
+                if (updateSearcher != null)
+                {
+                    Marshal.ReleaseComObject(updateSearcher);
+                    updateSearcher = null;
+                }
+
+                // Release the UpdateSession COM object
+                if (updateSession != null)
+                {
+                    Marshal.ReleaseComObject(updateSession);
+                    updateSession = null;
+                }
+
+                // Force garbage collection to clean up any remaining COM references
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
             }
 
             return pendingUpdates.ToString();

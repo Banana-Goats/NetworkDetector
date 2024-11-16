@@ -53,6 +53,8 @@
             button5 = new Button();
             button4 = new Button();
             panel1 = new Panel();
+            label6 = new Label();
+            latestFileDateTextBox = new TextBox();
             label1 = new Label();
             pendingUpdatesTextBox = new TextBox();
             logTextBox = new TextBox();
@@ -101,7 +103,7 @@
             // checkBox1
             // 
             checkBox1.AutoSize = true;
-            checkBox1.Location = new Point(156, 266);
+            checkBox1.Location = new Point(156, 297);
             checkBox1.Name = "checkBox1";
             checkBox1.Size = new Size(15, 14);
             checkBox1.TabIndex = 24;
@@ -154,7 +156,7 @@
             // 
             // ipAddressTextBox
             // 
-            ipAddressTextBox.Location = new Point(177, 262);
+            ipAddressTextBox.Location = new Point(177, 293);
             ipAddressTextBox.Name = "ipAddressTextBox";
             ipAddressTextBox.ReadOnly = true;
             ipAddressTextBox.Size = new Size(147, 23);
@@ -167,7 +169,7 @@
             button3.BackColor = Color.FromArgb(46, 51, 73);
             button3.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
             button3.ForeColor = SystemColors.Control;
-            button3.Location = new Point(15, 262);
+            button3.Location = new Point(15, 293);
             button3.Name = "button3";
             button3.Size = new Size(134, 23);
             button3.TabIndex = 18;
@@ -278,7 +280,7 @@
             // 
             label5.AutoSize = true;
             label5.ForeColor = SystemColors.Control;
-            label5.Location = new Point(12, 288);
+            label5.Location = new Point(11, 319);
             label5.Name = "label5";
             label5.Size = new Size(98, 15);
             label5.TabIndex = 1;
@@ -286,11 +288,11 @@
             // 
             // Version
             // 
-            Version.Location = new Point(116, 285);
+            Version.Location = new Point(115, 316);
             Version.Name = "Version";
             Version.Size = new Size(66, 23);
             Version.TabIndex = 0;
-            Version.Text = "8.0.1";
+            Version.Text = "8.1.0";
             Version.TextAlign = HorizontalAlignment.Center;
             // 
             // button5
@@ -321,6 +323,8 @@
             // 
             // panel1
             // 
+            panel1.Controls.Add(label6);
+            panel1.Controls.Add(latestFileDateTextBox);
             panel1.Controls.Add(label1);
             panel1.Controls.Add(pendingUpdatesTextBox);
             panel1.Controls.Add(logTextBox);
@@ -345,15 +349,38 @@
             panel1.Controls.Add(buildNumberTextBox);
             panel1.Location = new Point(0, 0);
             panel1.Name = "panel1";
-            panel1.Size = new Size(336, 314);
+            panel1.Size = new Size(336, 346);
             panel1.TabIndex = 25;
+            // 
+            // label6
+            // 
+            label6.AutoSize = true;
+            label6.FlatStyle = FlatStyle.Flat;
+            label6.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            label6.ForeColor = SystemColors.Control;
+            label6.Location = new Point(35, 267);
+            label6.Name = "label6";
+            label6.Size = new Size(74, 15);
+            label6.TabIndex = 28;
+            label6.Text = "Sharepoint :";
+            // 
+            // latestFileDateTextBox
+            // 
+            latestFileDateTextBox.BackColor = Color.FromArgb(46, 51, 73);
+            latestFileDateTextBox.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            latestFileDateTextBox.ForeColor = SystemColors.Control;
+            latestFileDateTextBox.Location = new Point(116, 264);
+            latestFileDateTextBox.Name = "latestFileDateTextBox";
+            latestFileDateTextBox.ReadOnly = true;
+            latestFileDateTextBox.Size = new Size(207, 23);
+            latestFileDateTextBox.TabIndex = 27;
             // 
             // label1
             // 
             label1.AutoSize = true;
             label1.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
             label1.ForeColor = SystemColors.Control;
-            label1.Location = new Point(50, 237);
+            label1.Location = new Point(50, 239);
             label1.Name = "label1";
             label1.Size = new Size(59, 15);
             label1.TabIndex = 26;
@@ -364,7 +391,7 @@
             pendingUpdatesTextBox.BackColor = Color.FromArgb(46, 51, 73);
             pendingUpdatesTextBox.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
             pendingUpdatesTextBox.ForeColor = SystemColors.Control;
-            pendingUpdatesTextBox.Location = new Point(117, 235);
+            pendingUpdatesTextBox.Location = new Point(117, 236);
             pendingUpdatesTextBox.Name = "pendingUpdatesTextBox";
             pendingUpdatesTextBox.ReadOnly = true;
             pendingUpdatesTextBox.Size = new Size(207, 23);
@@ -375,7 +402,7 @@
             logTextBox.BackColor = Color.FromArgb(46, 51, 73);
             logTextBox.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
             logTextBox.ForeColor = SystemColors.Control;
-            logTextBox.Location = new Point(15, 290);
+            logTextBox.Location = new Point(15, 321);
             logTextBox.Name = "logTextBox";
             logTextBox.Size = new Size(309, 23);
             logTextBox.TabIndex = 17;
@@ -389,7 +416,7 @@
             panel3.Controls.Add(button5);
             panel3.Location = new Point(0, 0);
             panel3.Name = "panel3";
-            panel3.Size = new Size(336, 314);
+            panel3.Size = new Size(336, 346);
             panel3.TabIndex = 27;
             // 
             // storenametxt
@@ -408,7 +435,7 @@
             Button6.FlatStyle = FlatStyle.Flat;
             Button6.Font = new Font("Segoe UI", 9.75F, FontStyle.Bold, GraphicsUnit.Point, 0);
             Button6.ForeColor = SystemColors.Control;
-            Button6.Location = new Point(14, 320);
+            Button6.Location = new Point(14, 351);
             Button6.Name = "Button6";
             Button6.Size = new Size(99, 28);
             Button6.TabIndex = 28;
@@ -423,7 +450,7 @@
             button7.FlatStyle = FlatStyle.Flat;
             button7.Font = new Font("Segoe UI", 9.75F, FontStyle.Bold, GraphicsUnit.Point, 0);
             button7.ForeColor = SystemColors.Control;
-            button7.Location = new Point(119, 320);
+            button7.Location = new Point(119, 351);
             button7.Name = "button7";
             button7.Size = new Size(99, 28);
             button7.TabIndex = 29;
@@ -438,7 +465,7 @@
             button8.FlatStyle = FlatStyle.Flat;
             button8.Font = new Font("Segoe UI", 9.75F, FontStyle.Bold, GraphicsUnit.Point, 0);
             button8.ForeColor = SystemColors.Control;
-            button8.Location = new Point(224, 320);
+            button8.Location = new Point(224, 351);
             button8.Name = "button8";
             button8.Size = new Size(99, 28);
             button8.TabIndex = 30;
@@ -451,7 +478,7 @@
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
             BackColor = Color.FromArgb(46, 51, 73);
-            ClientSize = new Size(336, 356);
+            ClientSize = new Size(336, 390);
             Controls.Add(panel1);
             Controls.Add(button8);
             Controls.Add(button7);
@@ -505,5 +532,7 @@
         private TextBox storenametxt;
         private Label label1;
         private TextBox pendingUpdatesTextBox;
+        private Label label6;
+        private TextBox latestFileDateTextBox;
     }
 }
