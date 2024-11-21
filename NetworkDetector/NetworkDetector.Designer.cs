@@ -393,7 +393,6 @@
             pendingUpdatesTextBox.ForeColor = SystemColors.Control;
             pendingUpdatesTextBox.Location = new Point(117, 236);
             pendingUpdatesTextBox.Name = "pendingUpdatesTextBox";
-            pendingUpdatesTextBox.ReadOnly = true;
             pendingUpdatesTextBox.Size = new Size(207, 23);
             pendingUpdatesTextBox.TabIndex = 25;
             // 
