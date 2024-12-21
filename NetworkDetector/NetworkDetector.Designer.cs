@@ -292,7 +292,7 @@
             Version.Name = "Version";
             Version.Size = new Size(66, 23);
             Version.TabIndex = 0;
-            Version.Text = "8.1.0";
+            Version.Text = "8.2.0";
             Version.TextAlign = HorizontalAlignment.Center;
             // 
             // button5
@@ -478,10 +478,10 @@
             AutoScaleMode = AutoScaleMode.Font;
             BackColor = Color.FromArgb(46, 51, 73);
             ClientSize = new Size(336, 390);
-            Controls.Add(panel1);
             Controls.Add(button8);
             Controls.Add(button7);
             Controls.Add(Button6);
+            Controls.Add(panel1);
             Controls.Add(panel3);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             Icon = (Icon)resources.GetObject("$this.Icon");

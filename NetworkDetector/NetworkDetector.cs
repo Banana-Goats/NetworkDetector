@@ -19,6 +19,7 @@ namespace NetworkDetector
     public partial class NetworkDetector : Form
     {
         private const int TcpPort = 50550;
+        private const string HourlyTaskName = "Network Detector Hourly";
         private string headOfficeIpAddress = "195.62.221.62";
 
         private string gatheredData;
@@ -28,6 +29,7 @@ namespace NetworkDetector
         private NotifyIcon notifyIcon;
         private ContextMenuStrip contextMenu;
         private ToolStripMenuItem lastIpMenuItem;
+        private ToolStripMenuItem hourlyTaskMenuItem;
         private ToolStripMenuItem startUpMenuItem;
         private ToolStripMenuItem VersionMenuItem;
         private ToolStripMenuItem TaskRun;
@@ -42,9 +44,13 @@ namespace NetworkDetector
 
         private static readonly HttpClient client = new HttpClient();
 
+        private DataFetcher dataFetcher;
+
         public NetworkDetector()
         {
             InitializeComponent();
+
+            dataFetcher = new DataFetcher();
 
             // Existing initialization code...
             notifyIcon = new NotifyIcon();
@@ -66,6 +72,14 @@ namespace NetworkDetector
             if (!IsScheduledTaskExists("Network Detector"))
             {
                 contextMenu.Items.Add(TaskRun);
+            }
+
+            hourlyTaskMenuItem = new ToolStripMenuItem("Hourly Run Task");
+            hourlyTaskMenuItem.Click += new EventHandler(CreateHourlyScheduledTask);
+
+            if (!IsScheduledTaskExists(HourlyTaskName))
+            {
+                contextMenu.Items.Add(hourlyTaskMenuItem);
             }
 
             UpdateMenuItem = new ToolStripMenuItem("Update");
@@ -93,14 +107,15 @@ namespace NetworkDetector
             //this.Load += new System.EventHandler(this.button7_Click);
             this.Load += new System.EventHandler(this.NetworkDetector_Load);
 
-            StaticSpecs();
+            
         }
 
         private async void NetworkDetector_Load(object sender, EventArgs e)
         {
             string VersionNumber = Version.Text;
             VersionMenuItem.Text = $"Version Number {VersionNumber}";
-            this.Text = $"Network Manager {VersionNumber}";            
+            this.Text = $"Network Manager {VersionNumber}";
+            StaticSpecs();
         }
 
         #region SendingData
@@ -108,37 +123,30 @@ namespace NetworkDetector
         {
             try
             {
-                // Gather static data
-                string machineName = Environment.MachineName;
-                string cpuInfo = GetCPUInfo();
-                string ramInfo = GetRamInfo();
-                string windowsOS = GetWindowsOS();
-                string buildNumber = GetBuildNumber();
+                string machineNameValue = Environment.MachineName;
+                string cpuInfo = dataFetcher.GetCPUInfo();
+                string ramInfo = dataFetcher.GetRamInfo();
+                string windowsOS = dataFetcher.GetWindowsOS();
+                string buildNumber = dataFetcher.GetBuildNumber();
 
-                // Update UI with static data immediately
-                machineNameTextBox.Text = machineName;
+                // Update UI with static data
+                machineNameTextBox.Text = machineNameValue;
                 cpuInfoTextBox.Text = cpuInfo;
                 ramInfoTextBox.Text = ramInfo;
                 windowsOsTextBox.Text = windowsOS;
                 buildNumberTextBox.Text = buildNumber;
 
                 logTextBox.Clear();
-                logTextBox.AppendText($"Static Data Gathered: {machineName} | {cpuInfo} | {ramInfo} | {windowsOS} | {buildNumber}\r\n");
+                logTextBox.AppendText($"Static Data Gathered: {machineNameValue} | {cpuInfo} | {ramInfo} | {windowsOS} | {buildNumber}\r\n");
 
-                string latestFileDate = await GetLatestSharepointFileDateAsync();
-
+                string latestFileDate = await dataFetcher.GetLatestSharepointFileDateAsync();
                 latestFileDateTextBox.Text = latestFileDate;
 
-                // Fetch pending updates asynchronously
-                string pendingUpdates = await System.Threading.Tasks.Task.Run(() => GetPendingUpdates());
-
-                // Update the UI with pending updates
+                // Fetch pending updates
+                string pendingUpdates = await dataFetcher.GetPendingUpdatesAsync();
                 pendingUpdatesTextBox.Text = pendingUpdates;
 
                 logTextBox.AppendText($"Pending Updates: {pendingUpdates}\r\n");
-
-                                
-
             }
             catch (Exception ex)
             {
@@ -150,16 +158,16 @@ namespace NetworkDetector
         {
             try
             {
-                (string wanIp, string isp) = await GetWanIpAndIspAsync();
+                (string wanIp, string isp) = await dataFetcher.GetWanIpAndIspAsync();
                 if (wanIp == null)
                 {
                     logTextBox.AppendText("Unable to retrieve WAN IP address\r\n");
                     return;
                 }
 
-                string storageInfo = GetStorageInfo();
+                string storageInfo = dataFetcher.GetStorageInfo();
 
-                
+
 
                 // Update the text boxes with the dynamic data
                 Invoke(new System.Action(() =>
@@ -167,7 +175,7 @@ namespace NetworkDetector
                     wanIpTextBox.Text = wanIp;
                     ispTextBox.Text = isp;
                     storageInfoTextBox.Text = storageInfo;
-                    
+
                 }));
 
                 logTextBox.AppendText($"Dynamic Data Gathered: {wanIp} | {isp} | {storageInfo}\r\n");
@@ -178,14 +186,8 @@ namespace NetworkDetector
             }
         }
 
-        private async void SendButton(object sender, EventArgs e)
-        {
-            SendData(sender, e);
-        }
-
         private async void SendData(object sender, EventArgs e)
         {
-            // Ensure the handle is created before invoking
             if (!this.IsHandleCreated)
             {
                 return;
@@ -203,13 +205,13 @@ namespace NetworkDetector
             string buildNumber = buildNumberTextBox.Text;
             string version = Version.Text;
             string pendingUpdates = pendingUpdatesTextBox.Text;
-            string lastsharepointfile = latestFileDateTextBox.Text;            
+            string lastsharepointfile = latestFileDateTextBox.Text;
 
             string gatheredData = $"(MainData)|{machineName}|{wanIp}|{isp}|{cpuInfo}|{ramInfo}|{storageInfo}|{windowsOS}|{buildNumber}|{version}|{pendingUpdates}|{lastsharepointfile}";
 
             if (string.IsNullOrEmpty(gatheredData))
             {
-                logTextBox.AppendText("No data to send. Please gather data first.\r\n");
+                logTextBox.AppendText("No data to send.\r\n");
                 return;
             }
 
@@ -247,315 +249,12 @@ namespace NetworkDetector
             }
         }
 
-        private async Task<string> GetLatestSharepointFileDateAsync()
+        private async void SendButton(object sender, EventArgs e)
         {
-            return await System.Threading.Tasks.Task.Run(() =>
-            {
-                try
-                {
-                    // Step 1: Locate OneDrive directories dynamically
-                    List<string> oneDrivePaths = new List<string>();
-
-                    // Method 1: Use the "OneDrive" environment variable
-                    string oneDriveEnv = Environment.GetEnvironmentVariable("OneDrive");
-                    if (!string.IsNullOrEmpty(oneDriveEnv) && Directory.Exists(oneDriveEnv))
-                    {
-                        oneDrivePaths.Add(oneDriveEnv);
-                    }
-
-                    // Method 2: Search for directories starting with "OneDrive" in the user profile
-                    string userProfilePath = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-                    var foundOneDriveDirs = Directory.GetDirectories(userProfilePath, "OneDrive*", SearchOption.TopDirectoryOnly);
-                    foreach (var dir in foundOneDriveDirs)
-                    {
-                        if (Directory.Exists(dir) && !oneDrivePaths.Contains(dir))
-                        {
-                            oneDrivePaths.Add(dir);
-                        }
-                    }
-
-                    if (oneDrivePaths.Count == 0)
-                    {
-                        return "OneDrive folder not found.";
-                    }
-
-                    // Step 2: Search for Sharepoint folders within OneDrive directories
-                    List<string> sharepointFolders = new List<string>();
-
-                    foreach (var oneDrivePath in oneDrivePaths)
-                    {
-                        // Get all directories that contain "sharepoint" (case-insensitive)
-                        var folders = Directory.GetDirectories(oneDrivePath, "*sharepoint*", SearchOption.AllDirectories)
-                                               .Where(dir => dir.IndexOf("sharepoint", StringComparison.OrdinalIgnoreCase) >= 0);
-
-                        foreach (var folder in folders)
-                        {
-                            sharepointFolders.Add(folder);
-                        }
-                    }
-
-                    // Remove duplicates
-                    sharepointFolders = sharepointFolders.Distinct().ToList();
-
-                    if (sharepointFolders.Count == 0)
-                    {
-                        return "No Sharepoint folders found in OneDrive directories.";
-                    }
-
-                    // Step 3: Find the latest file across all Sharepoint folders
-                    FileInfo latestFile = null;
-
-                    foreach (var sharepointFolder in sharepointFolders)
-                    {
-                        // Get all files in the current Sharepoint folder, including subdirectories
-                        var allFiles = Directory.GetFiles(sharepointFolder, "*.*", SearchOption.AllDirectories);
-
-                        if (allFiles.Length == 0)
-                        {
-                            continue; // No files in this Sharepoint folder
-                        }
-
-                        // Find the latest file based on LastWriteTime
-                        var currentLatestFile = allFiles
-                            .Select(f => new FileInfo(f))
-                            .OrderByDescending(fi => fi.LastWriteTime)
-                            .FirstOrDefault();
-
-                        if (currentLatestFile != null)
-                        {
-                            if (latestFile == null || currentLatestFile.LastWriteTime > latestFile.LastWriteTime)
-                            {
-                                latestFile = currentLatestFile;
-                            }
-                        }
-                    }
-
-                    if (latestFile != null)
-                    {
-                        // Return only the date in dd/MM/yyyy format
-                        return latestFile.LastWriteTime.ToString("dd/MM/yyyy");
-                    }
-                    else
-                    {
-                        return "Unable to determine the latest file in Sharepoint folders.";
-                    }
-                }
-                catch (Exception ex)
-                {
-                    return $"Error retrieving latest Sharepoint file date: {ex.Message}";
-                }
-            });
+            SendData(sender, e);
         }
 
-        private string GetPendingUpdates()
-        {
-            StringBuilder pendingUpdates = new StringBuilder();
-            UpdateSession updateSession = null;
-            IUpdateSearcher updateSearcher = null;
-
-            try
-            {
-                // Create the Update Session
-                updateSession = new UpdateSession();
-
-                // Create an Update Searcher
-                updateSearcher = updateSession.CreateUpdateSearcher();
-
-                // Search for updates that are not installed and not hidden
-                ISearchResult searchResult = updateSearcher.Search("IsInstalled=0 AND IsHidden=0");
-
-                //pendingUpdates.AppendLine($"Found {searchResult.Updates.Count} pending updates.");
-
-                if (searchResult.Updates.Count == 0)
-                {
-                    pendingUpdates.AppendLine("None");
-                }
-                else
-                {
-                    foreach (IUpdate update in searchResult.Updates)
-                    {
-                        pendingUpdates.AppendLine(update.Title);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                pendingUpdates.AppendLine($"Error retrieving updates: {ex.Message}");
-            }
-            finally
-            {
-                // Release the UpdateSearcher COM object
-                if (updateSearcher != null)
-                {
-                    Marshal.ReleaseComObject(updateSearcher);
-                    updateSearcher = null;
-                }
-
-                // Release the UpdateSession COM object
-                if (updateSession != null)
-                {
-                    Marshal.ReleaseComObject(updateSession);
-                    updateSession = null;
-                }
-
-                // Force garbage collection to clean up any remaining COM references
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
-            }
-
-            return pendingUpdates.ToString();
-        }
-
-        private async Task<(string, string)> GetWanIpAndIspAsync()
-        {
-            try
-            {
-                using (HttpClient httpClient = new HttpClient())
-                {
-                    httpClient.Timeout = TimeSpan.FromSeconds(10);
-                    string response = await httpClient.GetStringAsync("https://ipinfo.io/json");
-                    var json = JObject.Parse(response);
-                    string ip = json["ip"]?.ToString();
-                    string isp = json["org"]?.ToString();
-
-                    if (!string.IsNullOrEmpty(isp))
-                    {
-                        // Use regular expression to extract the ISP name
-                        var match = System.Text.RegularExpressions.Regex.Match(isp, @"(?<=\s)(.*)");
-                        if (match.Success)
-                        {
-                            isp = match.Value.Trim();
-                        }
-                    }
-
-                    return (ip, isp);
-                }
-            }
-            catch (Exception ex)
-            {
-                logTextBox.AppendText($"Exception when getting WAN IP and ISP: {ex.Message}\r\n");
-                return (null, null);
-            }
-        }
-
-        private string GetCPUInfo()
-        {
-            string cpuInfo = string.Empty;
-
-            try
-            {
-                ManagementObjectSearcher searcher = new ManagementObjectSearcher("SELECT * FROM Win32_Processor");
-                foreach (ManagementObject obj in searcher.Get())
-                {
-                    cpuInfo = obj["Name"].ToString();
-                    break; // Assuming single CPU
-                }
-
-                // Extract the manufacturer and model
-                if (cpuInfo.Contains("Intel"))
-                {
-                    cpuInfo = "Intel " + ExtractIntelModel(cpuInfo);
-                }
-                else if (cpuInfo.Contains("AMD"))
-                {
-                    cpuInfo = "AMD " + ExtractAMDModel(cpuInfo);
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show("Error retrieving CPU information: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-
-            return cpuInfo;
-        }
-
-        private string ExtractIntelModel(string cpuName)
-        {
-            // Example: Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz -> i5-10300H
-            string[] parts = cpuName.Split(' ');
-            foreach (string part in parts)
-            {
-                if (part.StartsWith("i") && part.Contains("-"))
-                {
-                    return part;
-                }
-            }
-            return "Unknown Model";
-        }
-
-        private string ExtractAMDModel(string cpuName)
-        {
-            // Example: AMD Ryzen 5 3600 6-Core Processor -> Ryzen 5 3600
-            string[] parts = cpuName.Split(' ');
-            for (int i = 0; i < parts.Length; i++)
-            {
-                if (parts[i].Equals("Ryzen", StringComparison.OrdinalIgnoreCase))
-                {
-                    return $"{parts[i]} {parts[i + 1]} {parts[i + 2]}";
-                }
-            }
-            return "Unknown Model";
-        }
-
-        private string GetRamInfo()
-        {
-            var computerInfo = new ComputerInfo();
-            ulong totalMemory = computerInfo.TotalPhysicalMemory;
-            return $"{(totalMemory / (1024 * 1024 * 1024)):0}GB";
-        }
-
-        private string GetStorageInfo()
-        {
-            DriveInfo cDrive = new DriveInfo("C");
-            long totalSize = cDrive.TotalSize;
-            long availableSpace = cDrive.AvailableFreeSpace;
-            long usedSpace = totalSize - availableSpace;
-            return $"{(usedSpace / (1024 * 1024 * 1024)):0}/{(totalSize / (1024 * 1024 * 1024)):0}GB";
-        }
-
-        private string GetWindowsOS()
-        {
-            try
-            {
-                string osName = string.Empty;
-                string version = string.Empty;
-                string buildNumber = string.Empty;
-
-                ManagementObjectSearcher searcher = new ManagementObjectSearcher("SELECT * FROM Win32_OperatingSystem");
-                foreach (ManagementObject os in searcher.Get())
-                {
-                    osName = os["Caption"].ToString();
-                    version = os["Version"].ToString();
-                    buildNumber = os["BuildNumber"].ToString();
-                    break; // Assuming single OS instance
-                }
-
-                if (osName.StartsWith("Microsoft"))
-                {
-                    osName = osName.Replace("Microsoft", "").Trim();
-                }
-
-                return $"{osName}";
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show("Error retrieving Windows OS information: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return "Unknown OS";
-            }
-        }
-
-        private string GetBuildNumber()
-        {
-            try
-            {
-                return Environment.OSVersion.Version.Build.ToString();
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show("Error retrieving build number information: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return "Unknown Build";
-            }
-        }
+        
 
         #endregion
 
@@ -849,6 +548,52 @@ namespace NetworkDetector
             catch (Exception ex)
             {
                 MessageBox.Show($"Error running the .bat file: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void CreateHourlyScheduledTask(object sender, EventArgs e)
+        {
+            try
+            {
+                // Get the path to the current executable
+                string exePath = Application.ExecutablePath;
+
+                // Build the command to create the scheduled task
+                string taskCreateCommand = $"schtasks /create /tn \"{HourlyTaskName}\" /tr \"\\\"{exePath}\\\"\" /sc hourly /rl highest /f";
+
+                // Start the process to create the scheduled task
+                ProcessStartInfo psi = new ProcessStartInfo();
+                psi.FileName = "cmd.exe";
+                psi.Arguments = $"/c {taskCreateCommand}";
+                psi.UseShellExecute = false;  // False to capture output and errors
+                psi.RedirectStandardOutput = true;
+                psi.RedirectStandardError = true;
+                psi.Verb = "runas";  // Ensures the command runs with admin privileges
+                psi.CreateNoWindow = true;
+
+                using (Process process = Process.Start(psi))
+                {
+                    process.WaitForExit();
+
+                    string output = process.StandardOutput.ReadToEnd();
+                    string error = process.StandardError.ReadToEnd();
+
+                    if (process.ExitCode == 0)
+                    {
+                        MessageBox.Show("Hourly scheduled task created successfully!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+                        // Remove the menu item, as the task now exists
+                        contextMenu.Items.Remove(hourlyTaskMenuItem);
+                    }
+                    else
+                    {
+                        MessageBox.Show($"Failed to create hourly scheduled task. Error: {error}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"An exception occurred: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
