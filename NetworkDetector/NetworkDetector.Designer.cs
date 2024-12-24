@@ -175,7 +175,7 @@
             button3.TabIndex = 18;
             button3.Text = "Send";
             button3.UseVisualStyleBackColor = false;
-            button3.Click += SendButton;
+            button3.Click += SendButton_Click;
             // 
             // label9
             // 
@@ -280,7 +280,7 @@
             // 
             label5.AutoSize = true;
             label5.ForeColor = SystemColors.Control;
-            label5.Location = new Point(11, 319);
+            label5.Location = new Point(12, 297);
             label5.Name = "label5";
             label5.Size = new Size(98, 15);
             label5.TabIndex = 1;
@@ -288,11 +288,11 @@
             // 
             // Version
             // 
-            Version.Location = new Point(115, 316);
+            Version.Location = new Point(116, 294);
             Version.Name = "Version";
             Version.Size = new Size(66, 23);
             Version.TabIndex = 0;
-            Version.Text = "8.2.0";
+            Version.Text = "8.4.0";
             Version.TextAlign = HorizontalAlignment.Center;
             // 
             // button5
@@ -327,7 +327,6 @@
             panel1.Controls.Add(latestFileDateTextBox);
             panel1.Controls.Add(label1);
             panel1.Controls.Add(pendingUpdatesTextBox);
-            panel1.Controls.Add(logTextBox);
             panel1.Controls.Add(machineNameTextBox);
             panel1.Controls.Add(storageInfoTextBox);
             panel1.Controls.Add(label11);
@@ -349,7 +348,7 @@
             panel1.Controls.Add(buildNumberTextBox);
             panel1.Location = new Point(0, 0);
             panel1.Name = "panel1";
-            panel1.Size = new Size(336, 346);
+            panel1.Size = new Size(336, 325);
             panel1.TabIndex = 25;
             // 
             // label6
@@ -399,11 +398,13 @@
             // logTextBox
             // 
             logTextBox.BackColor = Color.FromArgb(46, 51, 73);
-            logTextBox.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            logTextBox.Font = new Font("Segoe UI Semibold", 8.25F, FontStyle.Bold, GraphicsUnit.Point, 0);
             logTextBox.ForeColor = SystemColors.Control;
-            logTextBox.Location = new Point(15, 321);
+            logTextBox.Location = new Point(3, 331);
+            logTextBox.Multiline = true;
             logTextBox.Name = "logTextBox";
-            logTextBox.Size = new Size(309, 23);
+            logTextBox.ScrollBars = ScrollBars.Vertical;
+            logTextBox.Size = new Size(333, 102);
             logTextBox.TabIndex = 17;
             // 
             // panel3
@@ -415,7 +416,7 @@
             panel3.Controls.Add(button5);
             panel3.Location = new Point(0, 0);
             panel3.Name = "panel3";
-            panel3.Size = new Size(336, 346);
+            panel3.Size = new Size(336, 325);
             panel3.TabIndex = 27;
             // 
             // storenametxt
@@ -434,7 +435,7 @@
             Button6.FlatStyle = FlatStyle.Flat;
             Button6.Font = new Font("Segoe UI", 9.75F, FontStyle.Bold, GraphicsUnit.Point, 0);
             Button6.ForeColor = SystemColors.Control;
-            Button6.Location = new Point(14, 351);
+            Button6.Location = new Point(14, 439);
             Button6.Name = "Button6";
             Button6.Size = new Size(99, 28);
             Button6.TabIndex = 28;
@@ -449,7 +450,7 @@
             button7.FlatStyle = FlatStyle.Flat;
             button7.Font = new Font("Segoe UI", 9.75F, FontStyle.Bold, GraphicsUnit.Point, 0);
             button7.ForeColor = SystemColors.Control;
-            button7.Location = new Point(119, 351);
+            button7.Location = new Point(119, 439);
             button7.Name = "button7";
             button7.Size = new Size(99, 28);
             button7.TabIndex = 29;
@@ -464,7 +465,7 @@
             button8.FlatStyle = FlatStyle.Flat;
             button8.Font = new Font("Segoe UI", 9.75F, FontStyle.Bold, GraphicsUnit.Point, 0);
             button8.ForeColor = SystemColors.Control;
-            button8.Location = new Point(224, 351);
+            button8.Location = new Point(224, 439);
             button8.Name = "button8";
             button8.Size = new Size(99, 28);
             button8.TabIndex = 30;
@@ -477,10 +478,11 @@
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
             BackColor = Color.FromArgb(46, 51, 73);
-            ClientSize = new Size(336, 390);
+            ClientSize = new Size(336, 479);
             Controls.Add(button8);
             Controls.Add(button7);
             Controls.Add(Button6);
+            Controls.Add(logTextBox);
             Controls.Add(panel1);
             Controls.Add(panel3);
             FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -495,6 +497,7 @@
             panel3.ResumeLayout(false);
             panel3.PerformLayout();
             ResumeLayout(false);
+            PerformLayout();
         }
 
         #endregion

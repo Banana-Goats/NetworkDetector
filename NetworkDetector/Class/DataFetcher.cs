@@ -13,35 +13,59 @@ using System.Threading.Tasks;
 using Microsoft.Win32;
 using WUApiLib;
 using Microsoft.VisualBasic.Devices;
+using Newtonsoft.Json.Linq;
 
 namespace NetworkDetector
 {
     public class DataFetcher
     {
-        private static readonly HttpClient httpClient = new HttpClient();
+        private static readonly HttpClient httpClient = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(10) // Set the Timeout once here
+        };
+
+        private readonly NetworkDetector mainForm;
+
+        public DataFetcher(NetworkDetector form)
+        {
+            mainForm = form;
+        }
 
         public async Task<(string wanIp, string isp)> GetWanIpAndIspAsync()
         {
             try
             {
-                httpClient.Timeout = TimeSpan.FromSeconds(10);
                 string response = await httpClient.GetStringAsync("https://ipinfo.io/json");
-                var json = Newtonsoft.Json.Linq.JObject.Parse(response);
+                var json = JObject.Parse(response);
                 string ip = json["ip"]?.ToString();
                 string org = json["org"]?.ToString();
 
-                // Just return the org as is for now, remove the regex to simplify debugging
-                // If org is null or empty, you'll know something is off with the response
                 return (ip, org);
+            }
+            catch (HttpRequestException httpEx)
+            {
+                mainForm.LogError($"HTTP Request Error: {httpEx.Message}");
+                return (null, null);
+            }
+            catch (Newtonsoft.Json.JsonException jsonEx)
+            {
+                mainForm.LogError($"JSON Parsing Error: {jsonEx.Message}");
+                return (null, null);
+            }
+            catch (TaskCanceledException tcEx) when (!tcEx.CancellationToken.IsCancellationRequested)
+            {
+                // Handle timeout specifically
+                mainForm.LogError("The request timed out. Please check your network connection.");
+                return (null, null);
             }
             catch (Exception ex)
             {
-                // Log the error somewhere visible
-                Console.WriteLine("GetWanIpAndIspAsync Exception: " + ex.Message);
-                // Or if you have access to the form's logTextBox, invoke and log it there
+                mainForm.LogError($"Unexpected Error: {ex.Message}");
                 return (null, null);
             }
         }
+
+        
 
         public string GetCPUInfo()
         {

@@ -1,18 +1,19 @@
+using System;
 using System.Diagnostics;
-using Microsoft.VisualBasic.Devices;
-using Newtonsoft.Json.Linq;
-using System.Net.Sockets;
-using System.Text;
-using Microsoft.Win32.TaskScheduler;
-using System.Security.Principal;
-using Microsoft.Win32;
-using System.Management;
-using System.Net.Http;
+using System.IO;
 using System.IO.Compression;
-using Microsoft.VisualBasic;
-using System.DirectoryServices;
-using WUApiLib;
-using System.Runtime.InteropServices;
+using System.Net.Sockets;
+using System.Security.Principal;
+using System.Text;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+using Microsoft.Win32;
+using Microsoft.Win32.TaskScheduler;
+using Newtonsoft.Json.Linq;
+using System.Configuration;
+using System.Data.SqlClient;
+using Task = System.Threading.Tasks.Task;
+using Action = System.Action;
 
 namespace NetworkDetector
 {
@@ -23,8 +24,6 @@ namespace NetworkDetector
         private string headOfficeIpAddress = "195.62.221.62";
 
         private string gatheredData;
-
-        private string machineName;
 
         private NotifyIcon notifyIcon;
         private ContextMenuStrip contextMenu;
@@ -50,12 +49,13 @@ namespace NetworkDetector
         {
             InitializeComponent();
 
-            dataFetcher = new DataFetcher();
+            dataFetcher = new DataFetcher(this);
 
-            // Existing initialization code...
+            // Initialize NotifyIcon and ContextMenuStrip
             notifyIcon = new NotifyIcon();
             contextMenu = new ContextMenuStrip();
 
+            // Initialize Context Menu Items
             VersionMenuItem = new ToolStripMenuItem("Version : NA");
             VersionMenuItem.Enabled = false;
             contextMenu.Items.Add(VersionMenuItem);
@@ -98,28 +98,33 @@ namespace NetworkDetector
             this.MaximizeBox = false;
             this.MinimizeBox = true;
 
+            // Initialize Timer
             intervalTimer = new System.Windows.Forms.Timer();
             intervalTimer.Interval = 2 * 60 * 1000; // 2 minutes in milliseconds
             intervalTimer.Tick += SendData;
             intervalTimer.Start();
 
-
-            //this.Load += new System.EventHandler(this.button7_Click);
             this.Load += new System.EventHandler(this.NetworkDetector_Load);
-
-            
         }
 
         private async void NetworkDetector_Load(object sender, EventArgs e)
         {
-            string VersionNumber = Version.Text;
-            VersionMenuItem.Text = $"Version Number {VersionNumber}";
-            this.Text = $"Network Manager {VersionNumber}";
-            StaticSpecs();
+            try
+            {
+                string VersionNumber = Version.Text;
+                VersionMenuItem.Text = $"Version Number {VersionNumber}";
+                this.Text = $"Network Manager {VersionNumber}";
+                await StaticSpecsAsync();
+            }
+            catch (Exception ex)
+            {
+                LogError($"Exception in NetworkDetector_Load: {ex.Message}");
+            }
         }
 
         #region SendingData
-        private async void StaticSpecs()
+
+        private async Task StaticSpecsAsync()
         {
             try
             {
@@ -150,50 +155,66 @@ namespace NetworkDetector
             }
             catch (Exception ex)
             {
-                logTextBox.AppendText($"Exception in StaticSpecs: {ex.Message}\r\n");
+                LogError($"Exception in StaticSpecs: {ex.Message}");
             }
         }
 
-        private async System.Threading.Tasks.Task GatherDynamicData()
+        private async Task GatherDynamicDataAsync()
         {
             try
             {
                 (string wanIp, string isp) = await dataFetcher.GetWanIpAndIspAsync();
-                if (wanIp == null)
+
+                // Assign default values if data retrieval failed
+                string displayWanIp = !string.IsNullOrEmpty(wanIp) ? wanIp : "IP Failed";
+                string displayIsp = !string.IsNullOrEmpty(isp) ? isp : "ISP Failed";
+
+                // Update the text boxes with the dynamic data
+                if (wanIpTextBox.InvokeRequired)
                 {
-                    logTextBox.AppendText("Unable to retrieve WAN IP address\r\n");
-                    return;
+                    wanIpTextBox.Invoke(new Action(() =>
+                    {
+                        wanIpTextBox.Text = displayWanIp;
+                        ispTextBox.Text = displayIsp;
+                    }));
+                }
+                else
+                {
+                    wanIpTextBox.Text = displayWanIp;
+                    ispTextBox.Text = displayIsp;
                 }
 
                 string storageInfo = dataFetcher.GetStorageInfo();
-
-
-
-                // Update the text boxes with the dynamic data
-                Invoke(new System.Action(() =>
+                if (storageInfoTextBox.InvokeRequired)
                 {
-                    wanIpTextBox.Text = wanIp;
-                    ispTextBox.Text = isp;
+                    storageInfoTextBox.Invoke(new Action(() =>
+                    {
+                        storageInfoTextBox.Text = storageInfo;
+                    }));
+                }
+                else
+                {
                     storageInfoTextBox.Text = storageInfo;
+                }
 
-                }));
-
-                logTextBox.AppendText($"Dynamic Data Gathered: {wanIp} | {isp} | {storageInfo}\r\n");
+                logTextBox.AppendText($"Dynamic Data Gathered: {displayWanIp} | {displayIsp} | {storageInfo}\r\n");
             }
             catch (Exception ex)
             {
-                logTextBox.AppendText($"Exception: {ex.Message}\r\n");
+                LogError($"Exception in GatherDynamicData: {ex.Message}");
             }
         }
 
         private async void SendData(object sender, EventArgs e)
         {
+            logTextBox.Clear();
+
             if (!this.IsHandleCreated)
             {
                 return;
             }
 
-            await GatherDynamicData(); // Gather dynamic data before sending
+            await GatherDynamicDataAsync(); // Gather dynamic data before sending
 
             string machineName = machineNameTextBox.Text;
             string cpuInfo = cpuInfoTextBox.Text;
@@ -219,46 +240,50 @@ namespace NetworkDetector
 
             try
             {
-                var client = new TcpClient();
-                logTextBox.AppendText($"Attempting to connect to server at {serverIp}:{TcpPort}\r\n");
+                using (var tcpClient = new TcpClient())
+                {
+                    logTextBox.AppendText($"Attempting to connect to server at {serverIp}:{TcpPort}\r\n");
 
-                await client.ConnectAsync(serverIp, TcpPort);
-                logTextBox.AppendText("Connected to server\r\n");
+                    await tcpClient.ConnectAsync(serverIp, TcpPort);
+                    logTextBox.AppendText("Connected to server\r\n");
 
-                var stream = client.GetStream();
+                    using (var stream = tcpClient.GetStream())
+                    {
+                        byte[] data = Encoding.UTF8.GetBytes(gatheredData);
+                        await stream.WriteAsync(data, 0, data.Length);
+                        logTextBox.AppendText($"Sent: {gatheredData}\r\n");
 
-                byte[] data = Encoding.UTF8.GetBytes(gatheredData);
-                await stream.WriteAsync(data, 0, data.Length);
-                logTextBox.AppendText($"Sent: {gatheredData}\r\n");
+                        byte[] buffer = new byte[1024];
+                        int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
+                        string response = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+                        logTextBox.AppendText($"Received: {response}\r\n");
+                    }
 
-                byte[] buffer = new byte[1024];
-                int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
-                string response = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-                logTextBox.AppendText($"Received: {response}\r\n");
+                    tcpClient.Close();
+                    
 
-                client.Close();
-                logTextBox.Clear();
+                    await CheckAndUpdateAppUpdateColumn(machineName);
+                }
             }
             catch (SocketException ex)
             {
-                logTextBox.AppendText($"SocketException: {ex.Message}\r\n");
+                LogError($"SocketException: {ex.Message}");
             }
             catch (Exception ex)
             {
-                logTextBox.AppendText($"Exception: {ex.Message}\r\n");
+                LogError($"Exception: {ex.Message}");
             }
         }
 
-        private async void SendButton(object sender, EventArgs e)
+        private async void SendButton_Click(object sender, EventArgs e)
         {
             SendData(sender, e);
         }
 
-        
-
         #endregion
 
         #region TaskSetup
+
         private void CreateScheduledTask(object sender, EventArgs e)
         {
             RemoveFromStartup();
@@ -273,14 +298,16 @@ namespace NetworkDetector
                 string taskCreateCommand = $"schtasks /create /tn \"{taskName}\" /tr \"\\\"{exePath}\\\"\" /sc onlogon /rl highest /f";
 
                 // Start the process to create the scheduled task
-                ProcessStartInfo psi = new ProcessStartInfo();
-                psi.FileName = "cmd.exe";
-                psi.Arguments = $"/c {taskCreateCommand}";
-                psi.UseShellExecute = false;  // False to capture output and errors
-                psi.RedirectStandardOutput = true;
-                psi.RedirectStandardError = true;
-                psi.Verb = "runas";  // Ensures the command runs with admin privileges
-                psi.CreateNoWindow = true;
+                ProcessStartInfo psi = new ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    Arguments = $"/c {taskCreateCommand}",
+                    UseShellExecute = false,  // False to capture output and errors
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    Verb = "runas",  // Ensures the command runs with admin privileges
+                    CreateNoWindow = true
+                };
 
                 using (Process process = Process.Start(psi))
                 {
@@ -305,7 +332,7 @@ namespace NetworkDetector
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"An exception occurred: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                LogError($"An exception occurred: {ex.Message}");
             }
         }
 
@@ -321,10 +348,17 @@ namespace NetworkDetector
         private void RemoveFromStartup()
         {
             string startupPath = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
-            string shortcutPath = System.IO.Path.Combine(startupPath, "NetworkDetector.lnk");
-            if (System.IO.File.Exists(shortcutPath))
+            string shortcutPath = Path.Combine(startupPath, "NetworkDetector.lnk");
+            if (File.Exists(shortcutPath))
             {
-                System.IO.File.Delete(shortcutPath);
+                try
+                {
+                    File.Delete(shortcutPath);
+                }
+                catch (Exception ex)
+                {
+                    LogError($"Failed to remove startup shortcut: {ex.Message}");
+                }
             }
         }
 
@@ -354,14 +388,7 @@ namespace NetworkDetector
 
         private void checkBox1_CheckedChanged(object sender, EventArgs e)
         {
-            if (checkBox1.Checked)
-            {
-                ipAddressTextBox.ReadOnly = false;
-            }
-            else
-            {
-                ipAddressTextBox.ReadOnly = true;
-            }
+            ipAddressTextBox.ReadOnly = !checkBox1.Checked;
         }
 
         private void button4_Click(object sender, EventArgs e)
@@ -369,46 +396,53 @@ namespace NetworkDetector
             // Define the path to your .bat file
             string batFilePath = @"C:\Scripts\Maeko to Onedrive.bat";
 
-            // Ensure that the directory 'C:\Scripts' exists
-            string scriptsDirectory = Path.GetDirectoryName(batFilePath);
-            if (!Directory.Exists(scriptsDirectory))
+            try
             {
-                Directory.CreateDirectory(scriptsDirectory);
+                // Ensure that the directory 'C:\Scripts' exists
+                string scriptsDirectory = Path.GetDirectoryName(batFilePath);
+                if (!Directory.Exists(scriptsDirectory))
+                {
+                    Directory.CreateDirectory(scriptsDirectory);
+                }
+
+                // Get the store name from the textbox
+                string storeName = storenametxt.Text;
+
+                // Create the .bat file content
+                string batFileContent =
+                    @"xcopy C:\Maeko\UTILS ""C:\Users\admin\OneDrive - Ableworld UK\" + storeName + @""" /i /d /e /c /y" + Environment.NewLine +
+                    @"xcopy C:\Maeko\UTILS ""C:\Users\admin\OneDrive - Ableworld UK\" + storeName + @" Sharepoint"" /i /d /e /c /y";
+
+                // Write the content to the .bat file
+                File.WriteAllText(batFilePath, batFileContent);
+
+                // Create a new task definition
+                using (TaskService ts = new TaskService())
+                {
+                    TaskDefinition td = ts.NewTask();
+                    td.RegistrationInfo.Description = "Runs a Maeko to Onedrive.bat file every hour every day";
+
+                    // Set the start time to 09:00 AM
+                    DateTime startTime = DateTime.Today.AddHours(9);
+
+                    // Create a trigger that will start at 09:00 AM and repeat every hour for the duration of one day
+                    DailyTrigger dailyTrigger = new DailyTrigger { DaysInterval = 1, StartBoundary = startTime };
+                    dailyTrigger.Repetition = new RepetitionPattern(TimeSpan.FromHours(1), TimeSpan.FromDays(1));
+                    td.Triggers.Add(dailyTrigger);
+
+                    // Create an action that will run the .bat file
+                    td.Actions.Add(new ExecAction(batFilePath, null, null));
+
+                    // Register the task in the root folder
+                    ts.RootFolder.RegisterTaskDefinition(@"Maeko To Onedrive", td);
+                }
+
+                MessageBox.Show("Task created successfully.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
-
-            // Get the store name from the textbox
-            string storeName = storenametxt.Text;
-
-            // Create the .bat file content
-            string batFileContent =
-                @"xcopy C:\Maeko\UTILS ""C:\Users\admin\OneDrive - Ableworld UK\" + storeName + @""" /i /d /e /c /y" + Environment.NewLine +
-                @"xcopy C:\Maeko\UTILS ""C:\Users\admin\OneDrive - Ableworld UK\" + storeName + @" Sharepoint"" /i /d /e /c /y";
-
-            // Write the content to the .bat file
-            File.WriteAllText(batFilePath, batFileContent);
-
-            // Create a new task definition
-            using (TaskService ts = new TaskService())
+            catch (Exception ex)
             {
-                TaskDefinition td = ts.NewTask();
-                td.RegistrationInfo.Description = "Runs a Maeko to Onedrive.bat file every hour every day";
-
-                // Set the start time to 09:00 AM
-                DateTime startTime = DateTime.Today.AddHours(9);
-
-                // Create a trigger that will start at 09:00 AM and repeat every hour for the duration of one day
-                DailyTrigger dailyTrigger = new DailyTrigger { DaysInterval = 1, StartBoundary = startTime };
-                dailyTrigger.Repetition = new RepetitionPattern(TimeSpan.FromHours(1), TimeSpan.FromDays(1));
-                td.Triggers.Add(dailyTrigger);
-
-                // Create an action that will run the .bat file
-                td.Actions.Add(new ExecAction(batFilePath, null, null));
-
-                // Register the task in the root folder
-                ts.RootFolder.RegisterTaskDefinition(@"Maeko To Onedrive", td);
+                LogError($"Error creating task: {ex.Message}");
             }
-
-            MessageBox.Show("Task created successfully.");
         }
 
         private void button5_Click(object sender, EventArgs e)
@@ -427,11 +461,15 @@ namespace NetworkDetector
                 {
                     if (key == null)
                     {
-                        MessageBox.Show("Windows Update policy key does not exist. Creating key...");
-                        using (RegistryKey newKey = Registry.LocalMachine.CreateSubKey(@"SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"))
+                        DialogResult result = MessageBox.Show("Windows Update policy key does not exist. Create it?", "Create Registry Key", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                        if (result == DialogResult.Yes)
                         {
-                            newKey.SetValue("TargetReleaseVersion", 1, RegistryValueKind.DWord);
-                            newKey.SetValue("TargetReleaseVersionInfo", "24H2", RegistryValueKind.String);
+                            using (RegistryKey newKey = Registry.LocalMachine.CreateSubKey(@"SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"))
+                            {
+                                newKey.SetValue("TargetReleaseVersion", 1, RegistryValueKind.DWord);
+                                newKey.SetValue("TargetReleaseVersionInfo", "24H2", RegistryValueKind.String);
+                            }
+                            MessageBox.Show("Registry key created and values set successfully.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
                         }
                     }
                     else
@@ -445,9 +483,9 @@ namespace NetworkDetector
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"An error occurred: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                LogError($"An error occurred: {ex.Message}");
             }
-        }        
+        }
 
         private void Button6_Click(object sender, EventArgs e)
         {
@@ -465,11 +503,50 @@ namespace NetworkDetector
             panel1.Visible = false;
             panel3.Visible = true;
         }
+
         #endregion
 
         #region Updater
 
-        private async System.Threading.Tasks.Task DownloadVersionFolderAsync(string version)
+        private async Task CheckAndUpdateAppUpdateColumn(string machineName)
+        {
+            string connectionString = ConfigurationManager.ConnectionStrings["SQL"].ConnectionString;
+
+            try
+            {
+                using (SqlConnection connection = new SqlConnection(connectionString))
+                {
+                    await connection.OpenAsync();
+
+                    string selectQuery = "SELECT AppUpdate FROM DeviceConfig WHERE Machine = @MachineName";
+                    string updateQuery = "UPDATE DeviceConfig SET AppUpdate = 'No' WHERE Machine = @MachineName";
+
+                    using (SqlCommand selectCommand = new SqlCommand(selectQuery, connection))
+                    {
+                        selectCommand.Parameters.AddWithValue("@MachineName", machineName);
+
+                        var appUpdateValue = await selectCommand.ExecuteScalarAsync();
+
+                        if (appUpdateValue != null && appUpdateValue.ToString().Equals("Yes", StringComparison.OrdinalIgnoreCase))
+                        {
+                            using (SqlCommand updateCommand = new SqlCommand(updateQuery, connection))
+                            {
+                                updateCommand.Parameters.AddWithValue("@MachineName", machineName);
+                                await updateCommand.ExecuteNonQueryAsync();
+                                logTextBox.AppendText($"AppUpdate value for {machineName} set to 'No'.\r\n");
+                            }
+                        }
+                        // No else block needed as per original code
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError($"Database Exception: {ex.Message}. Skipping update and moving on.");
+            }
+        }
+
+        private async Task DownloadVersionFolderAsync(string version)
         {
             try
             {
@@ -507,7 +584,7 @@ namespace NetworkDetector
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error downloading the version folder: {ex.Message}", "Download Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                LogError($"Error downloading the version folder: {ex.Message}");
             }
         }
 
@@ -542,12 +619,12 @@ namespace NetworkDetector
                 }
                 else
                 {
-                    MessageBox.Show("The .bat file does not exist or could not be found.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    LogError("The .bat file does not exist or could not be found.");
                 }
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error running the .bat file: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                LogError($"Error running the .bat file: {ex.Message}");
             }
         }
 
@@ -562,14 +639,16 @@ namespace NetworkDetector
                 string taskCreateCommand = $"schtasks /create /tn \"{HourlyTaskName}\" /tr \"\\\"{exePath}\\\"\" /sc hourly /rl highest /f";
 
                 // Start the process to create the scheduled task
-                ProcessStartInfo psi = new ProcessStartInfo();
-                psi.FileName = "cmd.exe";
-                psi.Arguments = $"/c {taskCreateCommand}";
-                psi.UseShellExecute = false;  // False to capture output and errors
-                psi.RedirectStandardOutput = true;
-                psi.RedirectStandardError = true;
-                psi.Verb = "runas";  // Ensures the command runs with admin privileges
-                psi.CreateNoWindow = true;
+                ProcessStartInfo psi = new ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    Arguments = $"/c {taskCreateCommand}",
+                    UseShellExecute = false,  // False to capture output and errors
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    Verb = "runas",  // Ensures the command runs with admin privileges
+                    CreateNoWindow = true
+                };
 
                 using (Process process = Process.Start(psi))
                 {
@@ -593,11 +672,43 @@ namespace NetworkDetector
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"An exception occurred: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                LogError($"An exception occurred: {ex.Message}");
             }
         }
 
         #endregion
+
+        #region Helper Methods
+
+
+        public void LogInfo(string message)
+        {
+            AppendLog($"INFO: {message}");
+        }
+
+        public void LogError(string message)
+        {
+            AppendLog($"ERROR: {message}");
+        }
+
+        private void AppendLog(string message)
+        {
+            if (logTextBox.InvokeRequired)
+            {
+                logTextBox.Invoke(new Action(() =>
+                {
+                    logTextBox.AppendText($"{DateTime.Now}: {message}\r\n");
+                }));
+            }
+            else
+            {
+                logTextBox.AppendText($"{DateTime.Now}: {message}\r\n");
+            }
+        }
+
+        #endregion
+
+        #region Form Overrides
 
         protected override CreateParams CreateParams
         {
@@ -616,8 +727,9 @@ namespace NetworkDetector
             if (this.WindowState == FormWindowState.Minimized)
             {
                 Hide(); // Hide the form
-
             }
         }
+
+        #endregion
     }
 }
