@@ -103,7 +103,7 @@
             // checkBox1
             // 
             checkBox1.AutoSize = true;
-            checkBox1.Location = new Point(156, 297);
+            checkBox1.Location = new Point(156, 299);
             checkBox1.Name = "checkBox1";
             checkBox1.Size = new Size(15, 14);
             checkBox1.TabIndex = 24;
@@ -115,7 +115,7 @@
             label12.AutoSize = true;
             label12.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
             label12.ForeColor = SystemColors.Control;
-            label12.Location = new Point(69, 212);
+            label12.Location = new Point(69, 214);
             label12.Name = "label12";
             label12.Size = new Size(41, 15);
             label12.TabIndex = 23;
@@ -126,7 +126,7 @@
             label13.AutoSize = true;
             label13.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
             label13.ForeColor = SystemColors.Control;
-            label13.Location = new Point(80, 183);
+            label13.Location = new Point(80, 185);
             label13.Name = "label13";
             label13.Size = new Size(29, 15);
             label13.TabIndex = 22;
@@ -137,7 +137,7 @@
             buildNumberTextBox.BackColor = Color.FromArgb(46, 51, 73);
             buildNumberTextBox.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
             buildNumberTextBox.ForeColor = SystemColors.Control;
-            buildNumberTextBox.Location = new Point(117, 209);
+            buildNumberTextBox.Location = new Point(117, 211);
             buildNumberTextBox.Name = "buildNumberTextBox";
             buildNumberTextBox.ReadOnly = true;
             buildNumberTextBox.Size = new Size(207, 23);
@@ -148,7 +148,7 @@
             windowsOsTextBox.BackColor = Color.FromArgb(46, 51, 73);
             windowsOsTextBox.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
             windowsOsTextBox.ForeColor = SystemColors.Control;
-            windowsOsTextBox.Location = new Point(117, 180);
+            windowsOsTextBox.Location = new Point(117, 182);
             windowsOsTextBox.Name = "windowsOsTextBox";
             windowsOsTextBox.ReadOnly = true;
             windowsOsTextBox.Size = new Size(207, 23);
@@ -156,7 +156,7 @@
             // 
             // ipAddressTextBox
             // 
-            ipAddressTextBox.Location = new Point(177, 293);
+            ipAddressTextBox.Location = new Point(177, 295);
             ipAddressTextBox.Name = "ipAddressTextBox";
             ipAddressTextBox.ReadOnly = true;
             ipAddressTextBox.Size = new Size(147, 23);
@@ -169,7 +169,7 @@
             button3.BackColor = Color.FromArgb(46, 51, 73);
             button3.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
             button3.ForeColor = SystemColors.Control;
-            button3.Location = new Point(15, 293);
+            button3.Location = new Point(15, 295);
             button3.Name = "button3";
             button3.Size = new Size(134, 23);
             button3.TabIndex = 18;
@@ -182,7 +182,7 @@
             label9.AutoSize = true;
             label9.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
             label9.ForeColor = SystemColors.Control;
-            label9.Location = new Point(73, 154);
+            label9.Location = new Point(73, 156);
             label9.Name = "label9";
             label9.Size = new Size(40, 15);
             label9.TabIndex = 16;
@@ -193,7 +193,7 @@
             label10.AutoSize = true;
             label10.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
             label10.ForeColor = SystemColors.Control;
-            label10.Location = new Point(73, 125);
+            label10.Location = new Point(73, 127);
             label10.Name = "label10";
             label10.Size = new Size(40, 15);
             label10.TabIndex = 15;
@@ -204,7 +204,7 @@
             label11.AutoSize = true;
             label11.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
             label11.ForeColor = SystemColors.Control;
-            label11.Location = new Point(73, 96);
+            label11.Location = new Point(73, 98);
             label11.Name = "label11";
             label11.Size = new Size(36, 15);
             label11.TabIndex = 14;
@@ -215,7 +215,7 @@
             storageInfoTextBox.BackColor = Color.FromArgb(46, 51, 73);
             storageInfoTextBox.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
             storageInfoTextBox.ForeColor = SystemColors.Control;
-            storageInfoTextBox.Location = new Point(117, 151);
+            storageInfoTextBox.Location = new Point(117, 153);
             storageInfoTextBox.Name = "storageInfoTextBox";
             storageInfoTextBox.ReadOnly = true;
             storageInfoTextBox.Size = new Size(207, 23);
@@ -226,7 +226,7 @@
             ramInfoTextBox.BackColor = Color.FromArgb(46, 51, 73);
             ramInfoTextBox.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
             ramInfoTextBox.ForeColor = SystemColors.Control;
-            ramInfoTextBox.Location = new Point(117, 122);
+            ramInfoTextBox.Location = new Point(117, 124);
             ramInfoTextBox.Name = "ramInfoTextBox";
             ramInfoTextBox.ReadOnly = true;
             ramInfoTextBox.Size = new Size(207, 23);
@@ -237,7 +237,7 @@
             cpuInfoTextBox.BackColor = Color.FromArgb(46, 51, 73);
             cpuInfoTextBox.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
             cpuInfoTextBox.ForeColor = SystemColors.Control;
-            cpuInfoTextBox.Location = new Point(117, 93);
+            cpuInfoTextBox.Location = new Point(117, 95);
             cpuInfoTextBox.Name = "cpuInfoTextBox";
             cpuInfoTextBox.ReadOnly = true;
             cpuInfoTextBox.Size = new Size(207, 23);
@@ -280,7 +280,7 @@
             // 
             label5.AutoSize = true;
             label5.ForeColor = SystemColors.Control;
-            label5.Location = new Point(12, 297);
+            label5.Location = new Point(156, 45);
             label5.Name = "label5";
             label5.Size = new Size(98, 15);
             label5.TabIndex = 1;
@@ -288,11 +288,11 @@
             // 
             // Version
             // 
-            Version.Location = new Point(116, 294);
+            Version.Location = new Point(258, 42);
             Version.Name = "Version";
             Version.Size = new Size(66, 23);
             Version.TabIndex = 0;
-            Version.Text = "8.4.0";
+            Version.Text = "8.5.0";
             Version.TextAlign = HorizontalAlignment.Center;
             // 
             // button5
@@ -348,8 +348,9 @@
             panel1.Controls.Add(buildNumberTextBox);
             panel1.Location = new Point(0, 0);
             panel1.Name = "panel1";
-            panel1.Size = new Size(336, 325);
+            panel1.Size = new Size(336, 324);
             panel1.TabIndex = 25;
+            panel1.Paint += panel1_Paint;
             // 
             // label6
             // 
@@ -357,7 +358,7 @@
             label6.FlatStyle = FlatStyle.Flat;
             label6.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
             label6.ForeColor = SystemColors.Control;
-            label6.Location = new Point(35, 267);
+            label6.Location = new Point(35, 269);
             label6.Name = "label6";
             label6.Size = new Size(74, 15);
             label6.TabIndex = 28;
@@ -368,7 +369,7 @@
             latestFileDateTextBox.BackColor = Color.FromArgb(46, 51, 73);
             latestFileDateTextBox.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
             latestFileDateTextBox.ForeColor = SystemColors.Control;
-            latestFileDateTextBox.Location = new Point(116, 264);
+            latestFileDateTextBox.Location = new Point(116, 266);
             latestFileDateTextBox.Name = "latestFileDateTextBox";
             latestFileDateTextBox.ReadOnly = true;
             latestFileDateTextBox.Size = new Size(207, 23);
@@ -379,7 +380,7 @@
             label1.AutoSize = true;
             label1.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
             label1.ForeColor = SystemColors.Control;
-            label1.Location = new Point(50, 239);
+            label1.Location = new Point(50, 241);
             label1.Name = "label1";
             label1.Size = new Size(59, 15);
             label1.TabIndex = 26;
@@ -390,7 +391,7 @@
             pendingUpdatesTextBox.BackColor = Color.FromArgb(46, 51, 73);
             pendingUpdatesTextBox.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
             pendingUpdatesTextBox.ForeColor = SystemColors.Control;
-            pendingUpdatesTextBox.Location = new Point(117, 236);
+            pendingUpdatesTextBox.Location = new Point(117, 238);
             pendingUpdatesTextBox.Name = "pendingUpdatesTextBox";
             pendingUpdatesTextBox.Size = new Size(207, 23);
             pendingUpdatesTextBox.TabIndex = 25;
@@ -400,11 +401,11 @@
             logTextBox.BackColor = Color.FromArgb(46, 51, 73);
             logTextBox.Font = new Font("Segoe UI Semibold", 8.25F, FontStyle.Bold, GraphicsUnit.Point, 0);
             logTextBox.ForeColor = SystemColors.Control;
-            logTextBox.Location = new Point(3, 331);
+            logTextBox.Location = new Point(3, 330);
             logTextBox.Multiline = true;
             logTextBox.Name = "logTextBox";
             logTextBox.ScrollBars = ScrollBars.Vertical;
-            logTextBox.Size = new Size(333, 102);
+            logTextBox.Size = new Size(333, 129);
             logTextBox.TabIndex = 17;
             // 
             // panel3
@@ -416,7 +417,7 @@
             panel3.Controls.Add(button5);
             panel3.Location = new Point(0, 0);
             panel3.Name = "panel3";
-            panel3.Size = new Size(336, 325);
+            panel3.Size = new Size(336, 324);
             panel3.TabIndex = 27;
             // 
             // storenametxt
@@ -435,7 +436,7 @@
             Button6.FlatStyle = FlatStyle.Flat;
             Button6.Font = new Font("Segoe UI", 9.75F, FontStyle.Bold, GraphicsUnit.Point, 0);
             Button6.ForeColor = SystemColors.Control;
-            Button6.Location = new Point(14, 439);
+            Button6.Location = new Point(14, 465);
             Button6.Name = "Button6";
             Button6.Size = new Size(99, 28);
             Button6.TabIndex = 28;
@@ -450,7 +451,7 @@
             button7.FlatStyle = FlatStyle.Flat;
             button7.Font = new Font("Segoe UI", 9.75F, FontStyle.Bold, GraphicsUnit.Point, 0);
             button7.ForeColor = SystemColors.Control;
-            button7.Location = new Point(119, 439);
+            button7.Location = new Point(119, 465);
             button7.Name = "button7";
             button7.Size = new Size(99, 28);
             button7.TabIndex = 29;
@@ -465,7 +466,7 @@
             button8.FlatStyle = FlatStyle.Flat;
             button8.Font = new Font("Segoe UI", 9.75F, FontStyle.Bold, GraphicsUnit.Point, 0);
             button8.ForeColor = SystemColors.Control;
-            button8.Location = new Point(224, 439);
+            button8.Location = new Point(224, 465);
             button8.Name = "button8";
             button8.Size = new Size(99, 28);
             button8.TabIndex = 30;
@@ -478,7 +479,7 @@
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
             BackColor = Color.FromArgb(46, 51, 73);
-            ClientSize = new Size(336, 479);
+            ClientSize = new Size(336, 502);
             Controls.Add(button8);
             Controls.Add(button7);
             Controls.Add(Button6);

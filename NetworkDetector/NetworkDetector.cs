@@ -260,7 +260,7 @@ namespace NetworkDetector
                     }
 
                     tcpClient.Close();
-                    
+
 
                     await CheckAndUpdateAppUpdateColumn(machineName);
                 }
@@ -534,6 +534,7 @@ namespace NetworkDetector
                                 updateCommand.Parameters.AddWithValue("@MachineName", machineName);
                                 await updateCommand.ExecuteNonQueryAsync();
                                 logTextBox.AppendText($"AppUpdate value for {machineName} set to 'No'.\r\n");
+                                await DownloadVersionFolderAsync(versionNumber);
                             }
                         }
                         // No else block needed as per original code
@@ -731,5 +732,10 @@ namespace NetworkDetector
         }
 
         #endregion
+
+        private void panel1_Paint(object sender, PaintEventArgs e)
+        {
+
+        }
     }
 }

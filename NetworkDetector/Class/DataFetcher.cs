@@ -35,37 +35,21 @@ namespace NetworkDetector
         {
             try
             {
-                string response = await httpClient.GetStringAsync("https://ipinfo.io/json");
+                string response = await httpClient.GetStringAsync("http://ip-api.com/json/");
                 var json = JObject.Parse(response);
-                string ip = json["ip"]?.ToString();
-                string org = json["org"]?.ToString();
+                string ip = json["query"]?.ToString();
+                string org = json["isp"]?.ToString();
+
 
                 return (ip, org);
             }
-            catch (HttpRequestException httpEx)
-            {
-                mainForm.LogError($"HTTP Request Error: {httpEx.Message}");
-                return (null, null);
-            }
-            catch (Newtonsoft.Json.JsonException jsonEx)
-            {
-                mainForm.LogError($"JSON Parsing Error: {jsonEx.Message}");
-                return (null, null);
-            }
-            catch (TaskCanceledException tcEx) when (!tcEx.CancellationToken.IsCancellationRequested)
-            {
-                // Handle timeout specifically
-                mainForm.LogError("The request timed out. Please check your network connection.");
-                return (null, null);
-            }
             catch (Exception ex)
             {
-                mainForm.LogError($"Unexpected Error: {ex.Message}");
+                mainForm.LogError($"Error fetching WAN IP and ISP: {ex.Message}");
                 return (null, null);
             }
         }
 
-        
 
         public string GetCPUInfo()
         {
