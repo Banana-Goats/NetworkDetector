@@ -1,7 +1,10 @@
 using System;
+using System.Configuration;
+using System.Data.SqlClient;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
+using System.Net.Http;
 using System.Net.Sockets;
 using System.Security.Principal;
 using System.Text;
@@ -10,81 +13,68 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 using Microsoft.Win32.TaskScheduler;
 using Newtonsoft.Json.Linq;
-using System.Configuration;
-using System.Data.SqlClient;
 using Task = System.Threading.Tasks.Task;
 using Action = System.Action;
+
+using NetworkDetector.Class;
 
 namespace NetworkDetector
 {
     public partial class NetworkDetector : Form
     {
-        private const int TcpPort = 50550;
-        private const string HourlyTaskName = "Network Detector Hourly";
-        private string headOfficeIpAddress = "195.62.221.62";
+        // Fields read from App.config
+        private readonly int _tcpPort;
+        private readonly string _hourlyTaskName;
+        private readonly string _baseUrl;
+        private readonly string _versionNumber;
+        private readonly string _dansApp;
+        private readonly string _callpoplite;
+
+        private readonly DataFetcher dataFetcher;
+        private readonly WindowsSettingsManager _windowsSettingsManager;
+        private CleanupManager _cleanupManager;
+        private MaekoVersionUpdater _maekoVersionUpdater;
 
         private string gatheredData;
 
         private NotifyIcon notifyIcon;
         private ContextMenuStrip contextMenu;
-        private ToolStripMenuItem lastIpMenuItem;
-        private ToolStripMenuItem hourlyTaskMenuItem;
-        private ToolStripMenuItem startUpMenuItem;
         private ToolStripMenuItem VersionMenuItem;
         private ToolStripMenuItem TaskRun;
         private ToolStripMenuItem UpdateMenuItem;
         private System.Windows.Forms.Timer intervalTimer;
-
-        // Variables for folder download functionality
-        private const int port = 50547;
-        private const string serverIp = "http://bananagoats.co.uk";
-        private readonly string baseUrl = $"{serverIp}:{port}/";
-        private const string versionNumber = "Network Detector Update";
+        private System.Windows.Forms.Timer cleanupTimer;
 
         private static readonly HttpClient client = new HttpClient();
-
-        private DataFetcher dataFetcher;
 
         public NetworkDetector()
         {
             InitializeComponent();
 
-            dataFetcher = new DataFetcher(this);
+            _tcpPort = int.Parse(ConfigurationManager.AppSettings["TcpPort"]);
+            _hourlyTaskName = ConfigurationManager.AppSettings["HourlyTaskName"];
+            _baseUrl = ConfigurationManager.AppSettings["BananaGoatsBaseUrl"];
+            _versionNumber = ConfigurationManager.AppSettings["VersionNumber"];
+            _dansApp = ConfigurationManager.AppSettings["DansApp"];
+            _callpoplite = ConfigurationManager.AppSettings["CallPopLite"];
 
-            // Initialize NotifyIcon and ContextMenuStrip
+            dataFetcher = new DataFetcher(this);
+            _windowsSettingsManager = new WindowsSettingsManager(this);
+
+            // 3. Set up NotifyIcon, ContextMenu, and other UI elements
             notifyIcon = new NotifyIcon();
             contextMenu = new ContextMenuStrip();
 
-            // Initialize Context Menu Items
-            VersionMenuItem = new ToolStripMenuItem("Version : NA");
-            VersionMenuItem.Enabled = false;
+            VersionMenuItem = new ToolStripMenuItem("Version : NA") { Enabled = false };
             contextMenu.Items.Add(VersionMenuItem);
-
-            lastIpMenuItem = new ToolStripMenuItem("Last Recorded IP: N/A");
-            lastIpMenuItem.Enabled = false;
-            contextMenu.Items.Add(lastIpMenuItem);
 
             contextMenu.Items.Add("Show", null, ShowForm);
 
-            TaskRun = new ToolStripMenuItem("Start Up Task");
-            TaskRun.Click += new EventHandler(CreateScheduledTask);
-
-            if (!IsScheduledTaskExists("Network Detector"))
+            UpdateMenuItem = new ToolStripMenuItem("Update")
             {
-                contextMenu.Items.Add(TaskRun);
-            }
-
-            hourlyTaskMenuItem = new ToolStripMenuItem("Hourly Run Task");
-            hourlyTaskMenuItem.Click += new EventHandler(CreateHourlyScheduledTask);
-
-            if (!IsScheduledTaskExists(HourlyTaskName))
-            {
-                contextMenu.Items.Add(hourlyTaskMenuItem);
-            }
-
-            UpdateMenuItem = new ToolStripMenuItem("Update");
-            UpdateMenuItem.Enabled = true;
-            UpdateMenuItem.Click += new EventHandler(button7_Click);
+                Enabled = true
+            };
+            UpdateMenuItem.Click += button7_Click;
             contextMenu.Items.Add(UpdateMenuItem);
 
             notifyIcon.ContextMenuStrip = contextMenu;
@@ -98,22 +88,59 @@ namespace NetworkDetector
             this.MaximizeBox = false;
             this.MinimizeBox = true;
 
-            // Initialize Timer
-            intervalTimer = new System.Windows.Forms.Timer();
-            intervalTimer.Interval = 2 * 60 * 1000; // 2 minutes in milliseconds
+            // 4. Timer for sending data every 2 minutes
+            intervalTimer = new System.Windows.Forms.Timer
+            {
+                Interval = 2 * 60 * 1000
+            };
             intervalTimer.Tick += SendData;
             intervalTimer.Start();
 
-            this.Load += new System.EventHandler(this.NetworkDetector_Load);
+            _cleanupManager = new CleanupManager(this, logTextBox)
+            {
+                CleanupInterval = 6 * 60 * 60 * 1000 // e.g., 6 hours in ms
+            };
+
+            _cleanupManager.StartCleanup();
+
+            string connectionString = ConfigurationManager.ConnectionStrings["SQL"]?.ConnectionString;
+            _maekoVersionUpdater = new MaekoVersionUpdater(
+                connectionString,
+                LogError,
+                message => logTextBox.AppendText($"{DateTime.Now}: {message}\r\n")
+                );
+
+
+            this.Load += NetworkDetector_Load;
         }
 
         private async void NetworkDetector_Load(object sender, EventArgs e)
         {
+            // Create scheduled task if not exists
+            if (!IsScheduledTaskExists("Network Detector"))
+            {
+                CreateScheduledTask();
+            }
+
+            // Check Windows registry & GPO settings
+            _windowsSettingsManager.CheckGpoSettings();
+
+            if (IsScheduledTaskExists(_hourlyTaskName))
+            {
+                using (TaskService ts = new TaskService())
+                {
+                    ts.RootFolder.DeleteTask(_hourlyTaskName, false);
+                    LogError($"{_hourlyTaskName} was found and removed.");
+                }
+            }
+
+
             try
             {
                 string VersionNumber = Version.Text;
                 VersionMenuItem.Text = $"Version Number {VersionNumber}";
                 this.Text = $"Network Manager {VersionNumber}";
+
                 await StaticSpecsAsync();
             }
             catch (Exception ex)
@@ -128,13 +155,14 @@ namespace NetworkDetector
         {
             try
             {
+                // Gather basic system data
                 string machineNameValue = Environment.MachineName;
                 string cpuInfo = dataFetcher.GetCPUInfo();
                 string ramInfo = dataFetcher.GetRamInfo();
                 string windowsOS = dataFetcher.GetWindowsOS();
                 string buildNumber = dataFetcher.GetBuildNumber();
 
-                // Update UI with static data
+                // Update UI
                 machineNameTextBox.Text = machineNameValue;
                 cpuInfoTextBox.Text = cpuInfo;
                 ramInfoTextBox.Text = ramInfo;
@@ -142,16 +170,14 @@ namespace NetworkDetector
                 buildNumberTextBox.Text = buildNumber;
 
                 logTextBox.Clear();
-                logTextBox.AppendText($"Static Data Gathered: {machineNameValue} | {cpuInfo} | {ramInfo} | {windowsOS} | {buildNumber}\r\n");
 
+                // SharePoint info
                 string latestFileDate = await dataFetcher.GetLatestSharepointFileDateAsync();
                 latestFileDateTextBox.Text = latestFileDate;
 
-                // Fetch pending updates
+                // Pending updates
                 string pendingUpdates = await dataFetcher.GetPendingUpdatesAsync();
                 pendingUpdatesTextBox.Text = pendingUpdates;
-
-                logTextBox.AppendText($"Pending Updates: {pendingUpdates}\r\n");
             }
             catch (Exception ex)
             {
@@ -165,11 +191,11 @@ namespace NetworkDetector
             {
                 (string wanIp, string isp) = await dataFetcher.GetWanIpAndIspAsync();
 
-                // Assign default values if data retrieval failed
+                // IP or ISP might fail—default to fallback text
                 string displayWanIp = !string.IsNullOrEmpty(wanIp) ? wanIp : "IP Failed";
                 string displayIsp = !string.IsNullOrEmpty(isp) ? isp : "ISP Failed";
 
-                // Update the text boxes with the dynamic data
+                // Thread-safe UI update
                 if (wanIpTextBox.InvokeRequired)
                 {
                     wanIpTextBox.Invoke(new Action(() =>
@@ -196,8 +222,6 @@ namespace NetworkDetector
                 {
                     storageInfoTextBox.Text = storageInfo;
                 }
-
-                logTextBox.AppendText($"Dynamic Data Gathered: {displayWanIp} | {displayIsp} | {storageInfo}\r\n");
             }
             catch (Exception ex)
             {
@@ -214,8 +238,10 @@ namespace NetworkDetector
                 return;
             }
 
-            await GatherDynamicDataAsync(); // Gather dynamic data before sending
+            // 1. Gather dynamic data
+            await GatherDynamicDataAsync();
 
+            // 2. Build data string
             string machineName = machineNameTextBox.Text;
             string cpuInfo = cpuInfoTextBox.Text;
             string ramInfo = ramInfoTextBox.Text;
@@ -224,11 +250,12 @@ namespace NetworkDetector
             string storageInfo = storageInfoTextBox.Text;
             string windowsOS = windowsOsTextBox.Text;
             string buildNumber = buildNumberTextBox.Text;
-            string version = Version.Text;
+            string version = Version.Text; // from the control
             string pendingUpdates = pendingUpdatesTextBox.Text;
-            string lastsharepointfile = latestFileDateTextBox.Text;
+            string lastSharePointFile = latestFileDateTextBox.Text;
 
-            string gatheredData = $"(MainData)|{machineName}|{wanIp}|{isp}|{cpuInfo}|{ramInfo}|{storageInfo}|{windowsOS}|{buildNumber}|{version}|{pendingUpdates}|{lastsharepointfile}";
+            // Prepare data
+            string gatheredData = $"(MainData)|{machineName}|{wanIp}|{isp}|{cpuInfo}|{ramInfo}|{storageInfo}|{windowsOS}|{buildNumber}|{version}|{pendingUpdates}|{lastSharePointFile}";
 
             if (string.IsNullOrEmpty(gatheredData))
             {
@@ -236,23 +263,26 @@ namespace NetworkDetector
                 return;
             }
 
+            // IP address from user input (ipAddressTextBox)
             string serverIp = ipAddressTextBox.Text;
 
             try
             {
                 using (var tcpClient = new TcpClient())
                 {
-                    logTextBox.AppendText($"Attempting to connect to server at {serverIp}:{TcpPort}\r\n");
+                    logTextBox.AppendText($"Attempting to connect to server at {serverIp}:{_tcpPort}\r\n");
 
-                    await tcpClient.ConnectAsync(serverIp, TcpPort);
+                    // 3. Connect & send
+                    await tcpClient.ConnectAsync(serverIp, _tcpPort);
                     logTextBox.AppendText("Connected to server\r\n");
 
                     using (var stream = tcpClient.GetStream())
                     {
                         byte[] data = Encoding.UTF8.GetBytes(gatheredData);
                         await stream.WriteAsync(data, 0, data.Length);
-                        logTextBox.AppendText($"Sent: {gatheredData}\r\n");
+                        logTextBox.AppendText("Data Sent");
 
+                        // 4. Get response
                         byte[] buffer = new byte[1024];
                         int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
                         string response = Encoding.UTF8.GetString(buffer, 0, bytesRead);
@@ -261,8 +291,14 @@ namespace NetworkDetector
 
                     tcpClient.Close();
 
-
+                    // 5. Check DB columns for updates
+                    await CheckAndUpdateTillUpdaterColumn(machineName);
+                    await CheckAndUpdateCallPopLiteColumn(machineName);
                     await CheckAndUpdateAppUpdateColumn(machineName);
+
+                    await _maekoVersionUpdater.CheckAndUpdateMaekoVersionsAsync(machineName);
+
+
                 }
             }
             catch (SocketException ex)
@@ -284,28 +320,26 @@ namespace NetworkDetector
 
         #region TaskSetup
 
-        private void CreateScheduledTask(object sender, EventArgs e)
+        private void CreateScheduledTask()
         {
             RemoveFromStartup();
 
             try
             {
-                // Define the command for creating the task
                 string taskName = "Network Detector";
-                string exePath = @"C:\Network Detector\NetworkDetector.exe";  // Ensure this is a local path
+                string exePath = @"C:\Network Detector\NetworkDetector.exe";
 
-                // Properly quote the exePath to handle spaces, double quotes for passing to schtasks
-                string taskCreateCommand = $"schtasks /create /tn \"{taskName}\" /tr \"\\\"{exePath}\\\"\" /sc onlogon /rl highest /f";
+                string taskCreateCommand =
+                    $"schtasks /create /tn \"{taskName}\" /tr \"\\\"{exePath}\\\"\" /sc onlogon /rl highest /f";
 
-                // Start the process to create the scheduled task
-                ProcessStartInfo psi = new ProcessStartInfo
+                var psi = new ProcessStartInfo
                 {
                     FileName = "cmd.exe",
                     Arguments = $"/c {taskCreateCommand}",
-                    UseShellExecute = false,  // False to capture output and errors
+                    UseShellExecute = false,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
-                    Verb = "runas",  // Ensures the command runs with admin privileges
+                    Verb = "runas",
                     CreateNoWindow = true
                 };
 
@@ -316,16 +350,12 @@ namespace NetworkDetector
                     string output = process.StandardOutput.ReadToEnd();
                     string error = process.StandardError.ReadToEnd();
 
-                    if (process.ExitCode == 0)
+                    if (process.ExitCode != 0)
                     {
-                        MessageBox.Show("Scheduled task created successfully!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    }
-                    else
-                    {
-                        MessageBox.Show($"Failed to create scheduled task. Error: {error}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        MessageBox.Show($"Failed to create scheduled task. Error: {error}",
+                            "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     }
 
-                    // Optionally, log the output and error to the console or file for debugging purposes
                     Console.WriteLine("Output: " + output);
                     Console.WriteLine("Error: " + error);
                 }
@@ -362,7 +392,7 @@ namespace NetworkDetector
             }
         }
 
-        private bool IsUserAdministrator()
+        public bool IsUserAdministrator()
         {
             WindowsIdentity identity = WindowsIdentity.GetCurrent();
             WindowsPrincipal principal = new WindowsPrincipal(identity);
@@ -393,7 +423,7 @@ namespace NetworkDetector
 
         private void button4_Click(object sender, EventArgs e)
         {
-            // Define the path to your .bat file
+            // Example: create a .bat file and schedule it
             string batFilePath = @"C:\Scripts\Maeko to Onedrive.bat";
 
             try
@@ -410,7 +440,8 @@ namespace NetworkDetector
 
                 // Create the .bat file content
                 string batFileContent =
-                    @"xcopy C:\Maeko\UTILS ""C:\Users\admin\OneDrive - Ableworld UK\" + storeName + @""" /i /d /e /c /y" + Environment.NewLine +
+                    @"xcopy C:\Maeko\UTILS ""C:\Users\admin\OneDrive - Ableworld UK\" + storeName + @""" /i /d /e /c /y"
+                    + Environment.NewLine +
                     @"xcopy C:\Maeko\UTILS ""C:\Users\admin\OneDrive - Ableworld UK\" + storeName + @" Sharepoint"" /i /d /e /c /y";
 
                 // Write the content to the .bat file
@@ -422,18 +453,19 @@ namespace NetworkDetector
                     TaskDefinition td = ts.NewTask();
                     td.RegistrationInfo.Description = "Runs a Maeko to Onedrive.bat file every hour every day";
 
-                    // Set the start time to 09:00 AM
+                    // Start at 09:00
                     DateTime startTime = DateTime.Today.AddHours(9);
 
-                    // Create a trigger that will start at 09:00 AM and repeat every hour for the duration of one day
-                    DailyTrigger dailyTrigger = new DailyTrigger { DaysInterval = 1, StartBoundary = startTime };
+                    DailyTrigger dailyTrigger = new DailyTrigger
+                    {
+                        DaysInterval = 1,
+                        StartBoundary = startTime
+                    };
                     dailyTrigger.Repetition = new RepetitionPattern(TimeSpan.FromHours(1), TimeSpan.FromDays(1));
                     td.Triggers.Add(dailyTrigger);
 
-                    // Create an action that will run the .bat file
                     td.Actions.Add(new ExecAction(batFilePath, null, null));
 
-                    // Register the task in the root folder
                     ts.RootFolder.RegisterTaskDefinition(@"Maeko To Onedrive", td);
                 }
 
@@ -445,48 +477,6 @@ namespace NetworkDetector
             }
         }
 
-        private void button5_Click(object sender, EventArgs e)
-        {
-            // Check if the user is running as administrator
-            if (!IsUserAdministrator())
-            {
-                MessageBox.Show("This operation requires administrator privileges. Please run the application as an administrator.", "Admin Access Required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            try
-            {
-                // Open the registry key where the target feature update is stored
-                using (RegistryKey key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate", true))
-                {
-                    if (key == null)
-                    {
-                        DialogResult result = MessageBox.Show("Windows Update policy key does not exist. Create it?", "Create Registry Key", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-                        if (result == DialogResult.Yes)
-                        {
-                            using (RegistryKey newKey = Registry.LocalMachine.CreateSubKey(@"SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"))
-                            {
-                                newKey.SetValue("TargetReleaseVersion", 1, RegistryValueKind.DWord);
-                                newKey.SetValue("TargetReleaseVersionInfo", "24H2", RegistryValueKind.String);
-                            }
-                            MessageBox.Show("Registry key created and values set successfully.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                        }
-                    }
-                    else
-                    {
-                        // Set the values for TargetReleaseVersion and TargetReleaseVersionInfo
-                        key.SetValue("TargetReleaseVersion", 1, RegistryValueKind.DWord);
-                        key.SetValue("TargetReleaseVersionInfo", "24H2", RegistryValueKind.String);
-                        MessageBox.Show("Target feature update version set to Windows 11 24H2.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                LogError($"An error occurred: {ex.Message}");
-            }
-        }
-
         private void Button6_Click(object sender, EventArgs e)
         {
             panel1.Visible = true;
@@ -495,7 +485,8 @@ namespace NetworkDetector
 
         private async void button7_Click(object sender, EventArgs e)
         {
-            await DownloadVersionFolderAsync(versionNumber);
+            // Download updated "Network Detector"
+            await DownloadVersionFolderAsync(_versionNumber, "Network Detector");
         }
 
         private void button8_Click(object sender, EventArgs e)
@@ -504,13 +495,31 @@ namespace NetworkDetector
             panel3.Visible = true;
         }
 
+        private async void button1_Click(object sender, EventArgs e)
+        {
+            string machineName = machineNameTextBox.Text;
+            await CheckAndUpdateTillUpdaterColumn(machineName);
+            await CheckAndUpdateCallPopLiteColumn(machineName);
+            await CheckAndUpdateAppUpdateColumn(machineName);
+
+
+
+        }
+
+        private void button2_Click(object sender, EventArgs e)
+        {
+            _windowsSettingsManager.ResetFeatureUpdateVersionPolicy();
+            _windowsSettingsManager.WindowsUpdate();
+            _windowsSettingsManager.CheckGpoSettings();
+        }
+
         #endregion
 
         #region Updater
 
         private async Task CheckAndUpdateAppUpdateColumn(string machineName)
         {
-            string connectionString = ConfigurationManager.ConnectionStrings["SQL"].ConnectionString;
+            string connectionString = ConfigurationManager.ConnectionStrings["SQL"]?.ConnectionString;
 
             try
             {
@@ -518,26 +527,26 @@ namespace NetworkDetector
                 {
                     await connection.OpenAsync();
 
-                    string selectQuery = "SELECT AppUpdate FROM DeviceConfig WHERE Machine = @MachineName";
-                    string updateQuery = "UPDATE DeviceConfig SET AppUpdate = 'No' WHERE Machine = @MachineName";
+                    string selectQuery = "SELECT AppUpdate FROM Computers WHERE MachineName = @MachineName";
+                    string updateQuery = "UPDATE Computers SET AppUpdate = 'No' WHERE MachineName = @MachineName";
 
                     using (SqlCommand selectCommand = new SqlCommand(selectQuery, connection))
                     {
                         selectCommand.Parameters.AddWithValue("@MachineName", machineName);
-
                         var appUpdateValue = await selectCommand.ExecuteScalarAsync();
 
-                        if (appUpdateValue != null && appUpdateValue.ToString().Equals("Yes", StringComparison.OrdinalIgnoreCase))
+                        if (appUpdateValue != null
+                            && appUpdateValue.ToString().Equals("Yes", StringComparison.OrdinalIgnoreCase))
                         {
                             using (SqlCommand updateCommand = new SqlCommand(updateQuery, connection))
                             {
                                 updateCommand.Parameters.AddWithValue("@MachineName", machineName);
                                 await updateCommand.ExecuteNonQueryAsync();
-                                logTextBox.AppendText($"AppUpdate value for {machineName} set to 'No'.\r\n");
-                                await DownloadVersionFolderAsync(versionNumber);
+
+                                logTextBox.AppendText($"Update Requested for : {machineName}.\r\n");
+                                await DownloadVersionFolderAsync(_versionNumber, "Network Detector");
                             }
                         }
-                        // No else block needed as per original code
                     }
                 }
             }
@@ -547,41 +556,165 @@ namespace NetworkDetector
             }
         }
 
-        private async Task DownloadVersionFolderAsync(string version)
+        private async Task CheckAndUpdateTillUpdaterColumn(string machineName)
         {
+            string connectionString = ConfigurationManager.ConnectionStrings["SQL"]?.ConnectionString;
+
             try
             {
-                string downloadUrl = $"{baseUrl}BG%20Menu/{Uri.EscapeDataString(version)}";
-                string appDataPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Network Detector");
-
-                if (!Directory.Exists(appDataPath))
+                using (SqlConnection connection = new SqlConnection(connectionString))
                 {
-                    Directory.CreateDirectory(appDataPath);
+                    await connection.OpenAsync();
+
+                    string selectQuery = "SELECT TillUpdater FROM Computers WHERE MachineName = @MachineName";
+                    string updateQuery = "UPDATE Computers SET TillUpdater = 'No' WHERE MachineName = @MachineName";
+
+                    using (SqlCommand selectCommand = new SqlCommand(selectQuery, connection))
+                    {
+                        selectCommand.Parameters.AddWithValue("@MachineName", machineName);
+                        var appUpdateValue = await selectCommand.ExecuteScalarAsync();
+
+                        if (appUpdateValue != null
+                            && appUpdateValue.ToString().Equals("Yes", StringComparison.OrdinalIgnoreCase))
+                        {
+                            using (SqlCommand updateCommand = new SqlCommand(updateQuery, connection))
+                            {
+                                updateCommand.Parameters.AddWithValue("@MachineName", machineName);
+                                await updateCommand.ExecuteNonQueryAsync();
+
+                                logTextBox.AppendText($"Till Updater Update Requested for : {machineName}.\r\n");
+                                await DownloadVersionFolderAsync(_dansApp, "Till Updater");
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError($"Database Exception: {ex.Message}. Skipping update and moving on.");
+            }
+        }
+
+        private async Task CheckAndUpdateCallPopLiteColumn(string machineName)
+        {
+            string connectionString = ConfigurationManager.ConnectionStrings["SQL"]?.ConnectionString;
+
+            try
+            {
+                using (SqlConnection connection = new SqlConnection(connectionString))
+                {
+                    await connection.OpenAsync();
+
+                    string selectQuery = "SELECT CallPopLite FROM Computers WHERE MachineName = @MachineName";
+                    string updateQuery = "UPDATE Computers SET CallPopLite = 'No' WHERE MachineName = @MachineName";
+
+                    using (SqlCommand selectCommand = new SqlCommand(selectQuery, connection))
+                    {
+                        selectCommand.Parameters.AddWithValue("@MachineName", machineName);
+                        var appUpdateValue = await selectCommand.ExecuteScalarAsync();
+
+                        if (appUpdateValue != null
+                            && appUpdateValue.ToString().Equals("Yes", StringComparison.OrdinalIgnoreCase))
+                        {
+                            using (SqlCommand updateCommand = new SqlCommand(updateQuery, connection))
+                            {
+                                updateCommand.Parameters.AddWithValue("@MachineName", machineName);
+                                await updateCommand.ExecuteNonQueryAsync();
+
+                                logTextBox.AppendText($"Till Updater Update Requested for : {machineName}.\r\n");
+                                await DownloadVersionFolderAsync(_callpoplite, "Call Pop Lite");
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError($"Database Exception: {ex.Message}. Skipping update and moving on.");
+            }
+        }
+
+        private async Task DownloadVersionFolderAsync(string version, string folderName)
+        {
+            string downloadUrl = $"{_baseUrl}BG%20Menu/{Uri.EscapeDataString(version)}";
+            string appDataPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), folderName);
+            if (!Directory.Exists(appDataPath))
+            {
+                Directory.CreateDirectory(appDataPath);
+            }
+
+            string tempZipFile = Path.Combine(Path.GetTempPath(), $"{version}.zip");
+            string tempExtractPath = Path.Combine(Path.GetTempPath(), $"Extracted_{version}");
+
+            try
+            {
+                // -------------------------------
+                // 1) RETRY DOWNLOAD PART
+                // -------------------------------
+                int maxRetries = 3;
+                TimeSpan backoffDelay = TimeSpan.FromSeconds(30);
+
+                bool downloadSucceeded = false;
+
+                for (int attempt = 1; attempt <= maxRetries; attempt++)
+                {
+                    try
+                    {
+                        using (HttpClient client = new HttpClient())
+                        {
+                            // Possibly increase the timeout, but still keep it finite
+                            client.Timeout = TimeSpan.FromMinutes(10);
+
+                            LogError($"Download attempt {attempt} starting...");
+
+                            HttpResponseMessage response = await client.GetAsync(downloadUrl);
+                            response.EnsureSuccessStatusCode(); // Throws if not 2xx
+
+                            byte[] fileData = await response.Content.ReadAsByteArrayAsync();
+                            File.WriteAllBytes(tempZipFile, fileData);
+
+                            // If we get here, download succeeded
+                            downloadSucceeded = true;
+                            LogError("Download succeeded!");
+                            break;
+                        }
+                    }
+                    catch (HttpRequestException ex) when (attempt < maxRetries)
+                    {
+                        // If it’s a network/server error, we can log and wait before retrying
+                        LogError($"Download attempt {attempt} failed: {ex.Message}. Retrying in {backoffDelay.TotalSeconds} seconds...");
+                        await Task.Delay(backoffDelay);
+                    }
+                    catch (TaskCanceledException ex) when (attempt < maxRetries)
+                    {
+                        // Occurs if .NET canceled due to timeout
+                        LogError($"Download timed out on attempt {attempt}: {ex.Message}. Retrying in {backoffDelay.TotalSeconds} seconds...");
+                        await Task.Delay(backoffDelay);
+                    }
                 }
 
-                string tempZipFile = Path.Combine(Path.GetTempPath(), $"{version}.zip");
-                string tempExtractPath = Path.Combine(Path.GetTempPath(), $"Extracted_{version}");
-
-                using (HttpClient client = new HttpClient())
+                // If after all retries we still haven't succeeded, bail out
+                if (!downloadSucceeded)
                 {
-                    HttpResponseMessage response = await client.GetAsync(downloadUrl);
-                    response.EnsureSuccessStatusCode();
-
-                    byte[] fileData = await response.Content.ReadAsByteArrayAsync();
-
-                    File.WriteAllBytes(tempZipFile, fileData);
-
-                    ZipFile.ExtractToDirectory(tempZipFile, tempExtractPath);
-
-                    CopyFilesRecursively(new DirectoryInfo(tempExtractPath), new DirectoryInfo(appDataPath));
-
-                    File.Delete(tempZipFile);
-                    Directory.Delete(tempExtractPath, true);
-
-                    string batFilePath = Path.Combine(appDataPath, "Update.bat");
-
-                    RunBatFile(batFilePath);
+                    LogError("All download attempts have failed. Aborting.");
+                    return;
                 }
+
+                // -----------------------------------------
+                // 2) PROCESS THE DOWNLOADED FILE (if any)
+                // -----------------------------------------
+                ZipFile.ExtractToDirectory(tempZipFile, tempExtractPath);
+
+                CopyFilesRecursively(
+                    new DirectoryInfo(tempExtractPath),
+                    new DirectoryInfo(appDataPath));
+
+                File.Delete(tempZipFile);
+                Directory.Delete(tempExtractPath, true);
+
+                // If the extracted folder has an Update.bat, run it
+                string batFilePath = Path.Combine(appDataPath, "Update.bat");
+                RunBatFile(batFilePath);
             }
             catch (Exception ex)
             {
@@ -610,7 +743,7 @@ namespace NetworkDetector
             {
                 if (!string.IsNullOrEmpty(batFilePath) && File.Exists(batFilePath))
                 {
-                    ProcessStartInfo processInfo = new ProcessStartInfo()
+                    var processInfo = new ProcessStartInfo
                     {
                         FileName = batFilePath,
                         UseShellExecute = true,
@@ -629,63 +762,10 @@ namespace NetworkDetector
             }
         }
 
-        private void CreateHourlyScheduledTask(object sender, EventArgs e)
-        {
-            try
-            {
-                // Get the path to the current executable
-                string exePath = Application.ExecutablePath;
-
-                // Build the command to create the scheduled task
-                string taskCreateCommand = $"schtasks /create /tn \"{HourlyTaskName}\" /tr \"\\\"{exePath}\\\"\" /sc hourly /rl highest /f";
-
-                // Start the process to create the scheduled task
-                ProcessStartInfo psi = new ProcessStartInfo
-                {
-                    FileName = "cmd.exe",
-                    Arguments = $"/c {taskCreateCommand}",
-                    UseShellExecute = false,  // False to capture output and errors
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    Verb = "runas",  // Ensures the command runs with admin privileges
-                    CreateNoWindow = true
-                };
-
-                using (Process process = Process.Start(psi))
-                {
-                    process.WaitForExit();
-
-                    string output = process.StandardOutput.ReadToEnd();
-                    string error = process.StandardError.ReadToEnd();
-
-                    if (process.ExitCode == 0)
-                    {
-                        MessageBox.Show("Hourly scheduled task created successfully!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
-
-                        // Remove the menu item, as the task now exists
-                        contextMenu.Items.Remove(hourlyTaskMenuItem);
-                    }
-                    else
-                    {
-                        MessageBox.Show($"Failed to create hourly scheduled task. Error: {error}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                LogError($"An exception occurred: {ex.Message}");
-            }
-        }
 
         #endregion
 
         #region Helper Methods
-
-
-        public void LogInfo(string message)
-        {
-            AppendLog($"INFO: {message}");
-        }
 
         public void LogError(string message)
         {
@@ -716,7 +796,8 @@ namespace NetworkDetector
             get
             {
                 CreateParams cp = base.CreateParams;
-                cp.ClassStyle |= 0x200;  // CS_NOCLOSE
+                // CS_NOCLOSE = 0x200 to disable close button
+                cp.ClassStyle |= 0x200;
                 return cp;
             }
         }
@@ -727,15 +808,51 @@ namespace NetworkDetector
 
             if (this.WindowState == FormWindowState.Minimized)
             {
-                Hide(); // Hide the form
+                Hide(); // Minimizes to tray
             }
         }
 
         #endregion
 
-        private void panel1_Paint(object sender, PaintEventArgs e)
+        private async void button5_Click(object sender, EventArgs e)
         {
+            // Instantiate the winget manager.
+            WingetManager wingetManager = new WingetManager();
 
+            // Define the list of programs you want to check and uninstall.
+            string[] programsToUninstall = { 
+                "Microsoft OneNote - en-us", 
+                "Microsoft OneNote - de-de", 
+                "Microsoft OneNote - fr-fr",
+                "Microsoft OneNote - nl-nl",
+                "Microsoft OneNote - it-it" 
+            };
+
+            foreach (string program in programsToUninstall)
+            {
+                try
+                {
+                    bool isInstalled = await wingetManager.IsProgramInstalledAsync(program);
+
+                    if (isInstalled)
+                    {
+                        logTextBox.AppendText($"Uninstalling {program}...\r\n");
+
+                        await wingetManager.UninstallProgramAsync(program);
+
+                        logTextBox.AppendText($"{program} uninstalled.\r\n");
+                    }
+                    else
+                    {
+                        logTextBox.AppendText($"{program} is not installed.\r\n");
+                    }
+                }
+                catch (Exception ex)
+                {
+
+                    logTextBox.AppendText($"Error uninstalling {program}: {ex.Message}\r\n");
+                }
+            }
         }
     }
 }

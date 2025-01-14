@@ -50,19 +50,25 @@
             label2 = new Label();
             label5 = new Label();
             Version = new TextBox();
-            button5 = new Button();
             button4 = new Button();
             panel1 = new Panel();
             label6 = new Label();
             latestFileDateTextBox = new TextBox();
             label1 = new Label();
             pendingUpdatesTextBox = new TextBox();
-            logTextBox = new TextBox();
             panel3 = new Panel();
+            label7 = new Label();
+            chkOptionalUpdates = new ToggleSlider();
+            button2 = new Button();
+            button1 = new Button();
+            txtFeatureVersion = new TextBox();
+            txtProductVersion = new TextBox();
             storenametxt = new TextBox();
+            logTextBox = new TextBox();
             Button6 = new Button();
             button7 = new Button();
             button8 = new Button();
+            button5 = new Button();
             panel1.SuspendLayout();
             panel3.SuspendLayout();
             SuspendLayout();
@@ -292,21 +298,8 @@
             Version.Name = "Version";
             Version.Size = new Size(66, 23);
             Version.TabIndex = 0;
-            Version.Text = "8.5.0";
+            Version.Text = "9.0.4";
             Version.TextAlign = HorizontalAlignment.Center;
-            // 
-            // button5
-            // 
-            button5.BackColor = Color.FromArgb(46, 51, 74);
-            button5.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
-            button5.ForeColor = SystemColors.Control;
-            button5.Location = new Point(3, 37);
-            button5.Name = "button5";
-            button5.Size = new Size(143, 28);
-            button5.TabIndex = 1;
-            button5.Text = "Set 24H2";
-            button5.UseVisualStyleBackColor = false;
-            button5.Click += button5_Click;
             // 
             // button4
             // 
@@ -350,7 +343,6 @@
             panel1.Name = "panel1";
             panel1.Size = new Size(336, 324);
             panel1.TabIndex = 25;
-            panel1.Paint += panel1_Paint;
             // 
             // label6
             // 
@@ -396,6 +388,99 @@
             pendingUpdatesTextBox.Size = new Size(207, 23);
             pendingUpdatesTextBox.TabIndex = 25;
             // 
+            // panel3
+            // 
+            panel3.Controls.Add(button5);
+            panel3.Controls.Add(label7);
+            panel3.Controls.Add(chkOptionalUpdates);
+            panel3.Controls.Add(button2);
+            panel3.Controls.Add(button1);
+            panel3.Controls.Add(txtFeatureVersion);
+            panel3.Controls.Add(txtProductVersion);
+            panel3.Controls.Add(storenametxt);
+            panel3.Controls.Add(label5);
+            panel3.Controls.Add(Version);
+            panel3.Controls.Add(button4);
+            panel3.Location = new Point(0, 0);
+            panel3.Name = "panel3";
+            panel3.Size = new Size(336, 324);
+            panel3.TabIndex = 27;
+            // 
+            // label7
+            // 
+            label7.AutoSize = true;
+            label7.ForeColor = Color.White;
+            label7.Location = new Point(6, 295);
+            label7.Name = "label7";
+            label7.Size = new Size(99, 15);
+            label7.TabIndex = 11;
+            label7.Text = "Optional Updates";
+            // 
+            // chkOptionalUpdates
+            // 
+            chkOptionalUpdates.AutoSize = true;
+            chkOptionalUpdates.Location = new Point(111, 291);
+            chkOptionalUpdates.MinimumSize = new Size(45, 22);
+            chkOptionalUpdates.Name = "chkOptionalUpdates";
+            chkOptionalUpdates.OffBackColor = Color.Gray;
+            chkOptionalUpdates.OffToggleColor = Color.Gainsboro;
+            chkOptionalUpdates.OnBackColor = Color.MediumSlateBlue;
+            chkOptionalUpdates.OnToggleColor = Color.WhiteSmoke;
+            chkOptionalUpdates.Size = new Size(45, 22);
+            chkOptionalUpdates.TabIndex = 10;
+            chkOptionalUpdates.UseVisualStyleBackColor = true;
+            // 
+            // button2
+            // 
+            button2.BackColor = Color.FromArgb(46, 51, 74);
+            button2.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            button2.ForeColor = SystemColors.Control;
+            button2.Location = new Point(6, 256);
+            button2.Name = "button2";
+            button2.Size = new Size(143, 28);
+            button2.TabIndex = 9;
+            button2.Text = "Updates Config";
+            button2.UseVisualStyleBackColor = false;
+            button2.Click += button2_Click;
+            // 
+            // button1
+            // 
+            button1.BackColor = Color.FromArgb(46, 51, 74);
+            button1.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            button1.ForeColor = SystemColors.Control;
+            button1.Location = new Point(3, 38);
+            button1.Name = "button1";
+            button1.Size = new Size(143, 28);
+            button1.TabIndex = 8;
+            button1.Text = "Pulse";
+            button1.UseVisualStyleBackColor = false;
+            button1.Click += button1_Click;
+            // 
+            // txtFeatureVersion
+            // 
+            txtFeatureVersion.Location = new Point(259, 290);
+            txtFeatureVersion.Name = "txtFeatureVersion";
+            txtFeatureVersion.Size = new Size(65, 23);
+            txtFeatureVersion.TabIndex = 7;
+            txtFeatureVersion.TextAlign = HorizontalAlignment.Center;
+            // 
+            // txtProductVersion
+            // 
+            txtProductVersion.Location = new Point(162, 290);
+            txtProductVersion.Name = "txtProductVersion";
+            txtProductVersion.Size = new Size(90, 23);
+            txtProductVersion.TabIndex = 6;
+            txtProductVersion.TextAlign = HorizontalAlignment.Center;
+            // 
+            // storenametxt
+            // 
+            storenametxt.Location = new Point(156, 6);
+            storenametxt.Name = "storenametxt";
+            storenametxt.PlaceholderText = "Store Name";
+            storenametxt.Size = new Size(168, 23);
+            storenametxt.TabIndex = 2;
+            storenametxt.TextAlign = HorizontalAlignment.Center;
+            // 
             // logTextBox
             // 
             logTextBox.BackColor = Color.FromArgb(46, 51, 73);
@@ -407,27 +492,6 @@
             logTextBox.ScrollBars = ScrollBars.Vertical;
             logTextBox.Size = new Size(333, 129);
             logTextBox.TabIndex = 17;
-            // 
-            // panel3
-            // 
-            panel3.Controls.Add(storenametxt);
-            panel3.Controls.Add(label5);
-            panel3.Controls.Add(Version);
-            panel3.Controls.Add(button4);
-            panel3.Controls.Add(button5);
-            panel3.Location = new Point(0, 0);
-            panel3.Name = "panel3";
-            panel3.Size = new Size(336, 324);
-            panel3.TabIndex = 27;
-            // 
-            // storenametxt
-            // 
-            storenametxt.Location = new Point(156, 6);
-            storenametxt.Name = "storenametxt";
-            storenametxt.PlaceholderText = "Store Name";
-            storenametxt.Size = new Size(168, 23);
-            storenametxt.TabIndex = 2;
-            storenametxt.TextAlign = HorizontalAlignment.Center;
             // 
             // Button6
             // 
@@ -474,6 +538,19 @@
             button8.UseVisualStyleBackColor = false;
             button8.Click += button8_Click;
             // 
+            // button5
+            // 
+            button5.BackColor = Color.FromArgb(46, 51, 74);
+            button5.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            button5.ForeColor = SystemColors.Control;
+            button5.Location = new Point(3, 72);
+            button5.Name = "button5";
+            button5.Size = new Size(143, 28);
+            button5.TabIndex = 12;
+            button5.Text = "Uninstall Apps";
+            button5.UseVisualStyleBackColor = false;
+            button5.Click += button5_Click;
+            // 
             // NetworkDetector
             // 
             AutoScaleDimensions = new SizeF(7F, 15F);
@@ -484,8 +561,8 @@
             Controls.Add(button7);
             Controls.Add(Button6);
             Controls.Add(logTextBox);
-            Controls.Add(panel1);
             Controls.Add(panel3);
+            Controls.Add(panel1);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             Icon = (Icon)resources.GetObject("$this.Icon");
             Margin = new Padding(4, 3, 4, 3);
@@ -525,7 +602,6 @@
         private TextBox windowsOsTextBox;
         private CheckBox checkBox1;
         private Button button4;
-        private Button button5;
         private Panel panel1;
         private Panel panel3;
         private Button Button6;
@@ -537,5 +613,12 @@
         private TextBox pendingUpdatesTextBox;
         private Label label6;
         private TextBox latestFileDateTextBox;
+        private Button button1;
+        private Button button2;
+        private Label label7;
+        public TextBox txtFeatureVersion;
+        public TextBox txtProductVersion;
+        public ToggleSlider chkOptionalUpdates;
+        private Button button5;
     }
 }
