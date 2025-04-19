@@ -283,7 +283,7 @@
             Version.Name = "Version";
             Version.Size = new Size(66, 23);
             Version.TabIndex = 0;
-            Version.Text = "9.3.3";
+            Version.Text = "9.3.4";
             Version.TextAlign = HorizontalAlignment.Center;
             // 
             // button4
