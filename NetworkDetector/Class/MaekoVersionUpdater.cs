@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Configuration;
-using System.Data.SqlClient;
 using System.IO;
+using System.Threading.Tasks;
 
 namespace NetworkDetector.Class
 {
@@ -64,35 +64,33 @@ namespace NetworkDetector.Class
                 // Update SQL table if latest versions are found
                 if (latestCommsDate != null || latestTillDate != null)
                 {
-                    using (SqlConnection connection = new SqlConnection(_connectionString))
+                    // Instantiate the DatabaseService helper.
+                    // If you have updated DatabaseService to accept a connection string, pass _connectionString here.
+                    var dbService = new DatabaseService();
+
+                    string updateQuery = @"
+                UPDATE TBPC
+                SET CommsVersion = @CommsVersion,
+                    TillVersion = @TillVersion
+                WHERE Name = @MachineName";
+
+                    var parameters = new Dictionary<string, object>
+            {
+                { "@MachineName", machineName },
+                { "@CommsVersion", latestCommsDate.HasValue ? (object)latestCommsDate.Value : DBNull.Value },
+                { "@TillVersion", latestTillDate.HasValue ? (object)latestTillDate.Value : DBNull.Value }
+            };
+
+                    int rowsAffected = await dbService.ExecuteNonQueryAsync(updateQuery, parameters);
+                    if (rowsAffected > 0)
                     {
-                        await connection.OpenAsync();
-
-                        string updateQuery = "UPDATE machinedata SET CommsVersion = @CommsVersion, TillVersion = @TillVersion WHERE MachineName = @MachineName";
-
-                        using (SqlCommand updateCommand = new SqlCommand(updateQuery, connection))
-                        {
-                            updateCommand.Parameters.AddWithValue("@MachineName", machineName);
-                            updateCommand.Parameters.AddWithValue(
-                                "@CommsVersion",
-                                latestCommsDate.HasValue ? latestCommsDate.Value.ToString("dd/MM/yyyy") : DBNull.Value
-                            );
-                            updateCommand.Parameters.AddWithValue(
-                                "@TillVersion",
-                                latestTillDate.HasValue ? latestTillDate.Value.ToString("dd/MM/yyyy") : DBNull.Value
-                            );
-
-                            int rowsAffected = await updateCommand.ExecuteNonQueryAsync();
-
-                            if (rowsAffected > 0)
-                            {
-                                _appendLog($"Successfully updated versions for {machineName}.");
-                            }
-                            else
-                            {
-                                _appendLog($"No rows updated for {machineName}. Machine name may not exist in the database.");
-                            }
-                        }
+                        _appendLog($"Successfully updated versions for {machineName}. " +
+                                   $"CommsVersion = {latestCommsDate?.ToString("yyyy-MM-dd") ?? "null"}, " +
+                                   $"TillVersion = {latestTillDate?.ToString("yyyy-MM-dd") ?? "null"}");
+                    }
+                    else
+                    {
+                        _appendLog($"No rows updated for {machineName}. Machine name may not exist in the database.");
                     }
                 }
                 else

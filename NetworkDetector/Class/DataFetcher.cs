@@ -19,11 +19,6 @@ namespace NetworkDetector
 {
     public class DataFetcher
     {
-        private static readonly HttpClient httpClient = new HttpClient
-        {
-            Timeout = TimeSpan.FromSeconds(10) // Set the Timeout once here
-        };
-
         private readonly NetworkDetector mainForm;
 
         public DataFetcher(NetworkDetector form)
@@ -31,25 +26,29 @@ namespace NetworkDetector
             mainForm = form;
         }
 
-        public async Task<(string wanIp, string isp)> GetWanIpAndIspAsync()
+        private void LogError(string message) => mainForm?.LogError(message);
+
+        public async Task<(string wanIp, string isp, bool mobile)> GetWanIpAndIspAsync()
         {
             try
             {
-                string response = await httpClient.GetStringAsync("http://ip-api.com/json/");
+                // Use the URL that includes the desired fields.
+                string url = "https://pro.ip-api.com/json/?key=APLimLdoSBHfzWP&fields=isp,mobile,query";
+                string response = await SystemData.Client.GetStringAsync(url);
                 var json = JObject.Parse(response);
+
                 string ip = json["query"]?.ToString();
-                string org = json["isp"]?.ToString();
+                string isp = json["isp"]?.ToString();
+                bool mobile = json["mobile"] != null ? json["mobile"].ToObject<bool>() : false;
 
-
-                return (ip, org);
+                return (ip, isp, mobile);
             }
             catch (Exception ex)
             {
-                mainForm.LogError($"Error fetching WAN IP and ISP: {ex.Message}");
-                return (null, null);
+                mainForm.LogError($"Error fetching WAN IP, ISP, and mobile status: {ex.Message}");
+                return (null, null, false);
             }
         }
-
 
         public string GetCPUInfo()
         {
@@ -60,7 +59,7 @@ namespace NetworkDetector
                 {
                     foreach (ManagementObject obj in searcher.Get())
                     {
-                        cpuInfo = obj["Name"].ToString();
+                        cpuInfo = obj["Name"]?.ToString() ?? "Unknown CPU";
                         break; // single CPU assumed
                     }
                 }
@@ -68,11 +67,13 @@ namespace NetworkDetector
                 // Extract manufacturer and model
                 if (cpuInfo.Contains("Intel"))
                 {
-                    cpuInfo = "Intel " + ExtractIntelModel(cpuInfo);
+                    string model = ExtractIntelModel(cpuInfo);
+                    cpuInfo = $"Intel {model}";
                 }
                 else if (cpuInfo.Contains("AMD"))
                 {
-                    cpuInfo = "AMD " + ExtractAMDModel(cpuInfo);
+                    string model = ExtractAMDModel(cpuInfo);
+                    cpuInfo = $"AMD {model}";
                 }
             }
             catch
@@ -85,15 +86,25 @@ namespace NetworkDetector
 
         private string ExtractIntelModel(string cpuName)
         {
-            // Example: Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz -> i5-10300H
-            string[] parts = cpuName.Split(' ');
-            foreach (string part in parts)
+            // Regex patterns to capture various Intel CPU series (e.g., i5-10300H, Core(TM) 7 150U, Xeon, etc.)
+            string[] patterns = new[]
             {
-                if (part.StartsWith("i") && part.Contains("-"))
+                @"(i\d{1,2}-\w+)",          // Matches models like i5-10300H, i7-12700K, etc.
+                @"(Xeon\s+\w+[\-\w]*)",     // Matches Xeon variants
+                @"(Pentium\s+\w+)",         // Matches Pentium variants
+                @"(Celeron\s+\w+)",         // Matches Celeron variants
+                @"Core\(TM\)\s+(\d+\s+\S+)" // Matches patterns like "Core(TM) 7 150U"
+            };
+
+            foreach (var pattern in patterns)
+            {
+                Match match = Regex.Match(cpuName, pattern, RegexOptions.IgnoreCase);
+                if (match.Success)
                 {
-                    return part;
+                    return match.Groups[1].Value;
                 }
             }
+
             return "Unknown Model";
         }
 
@@ -231,7 +242,7 @@ namespace NetworkDetector
 
                     if (sharepointFolders.Count == 0)
                     {
-                        return "No Sharepoint folders found.";
+                        return "No Sharepoint";
                     }
 
                     FileInfo latestFile = null;
@@ -260,7 +271,7 @@ namespace NetworkDetector
                     }
                     else
                     {
-                        return "No files found in Sharepoint folders.";
+                        return "No Sharepoint Files";
                     }
                 }
                 catch (Exception ex)
@@ -272,44 +283,131 @@ namespace NetworkDetector
 
         public async Task<string> GetPendingUpdatesAsync()
         {
-            return await Task.Run(() =>
+            return await Task.Run(async () =>
             {
-                StringBuilder pendingUpdates = new StringBuilder();
-                UpdateSession updateSession = null;
-                IUpdateSearcher updateSearcher = null;
+                StringBuilder resultText = new StringBuilder();
+                var allUpdates = new List<UpdateRecord>();
+                bool hasSecurityUpdates = false;
 
                 try
                 {
-                    updateSession = new UpdateSession();
-                    updateSearcher = updateSession.CreateUpdateSearcher();
-                    ISearchResult searchResult = updateSearcher.Search("IsInstalled=0 AND IsHidden=0");
+                    dynamic updateSession = Activator.CreateInstance(Type.GetTypeFromProgID("Microsoft.Update.Session"));
+                    dynamic updateSearcher = updateSession.CreateUpdateSearcher();
+
+                    dynamic searchResult = updateSearcher.Search("IsInstalled=0 AND IsHidden=0");
 
                     if (searchResult.Updates.Count == 0)
                     {
-                        pendingUpdates.AppendLine("None");
+                        resultText.AppendLine("No");
                     }
                     else
                     {
-                        foreach (IUpdate update in searchResult.Updates)
+                        foreach (dynamic update in searchResult.Updates)
                         {
-                            pendingUpdates.AppendLine(update.Title);
+                            Guid? updateGuid = null;
+                            try
+                            {
+                                string guidString = update.Identity.UpdateID.ToString();
+                                updateGuid = Guid.Parse(guidString);
+                            }
+                            catch
+                            {
+                                continue;
+                            }
+
+                            string kbNumber = null;
+                            if (update.KBArticleIDs != null && update.KBArticleIDs.Count > 0)
+                            {
+                                kbNumber = update.KBArticleIDs[0].ToString();
+                            }
+
+                            bool isSecurity = false;
+                            foreach (dynamic category in update.Categories)
+                            {
+                                if (category.Name.Contains("Security", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    isSecurity = true;
+                                    hasSecurityUpdates = true;
+                                }
+                            }
+
+                            allUpdates.Add(new UpdateRecord
+                            {
+                                UpdateID = updateGuid.Value,
+                                Name = update.Title,
+                                KBNumber = kbNumber,
+                                UpdateType = isSecurity ? "Security" : GetFirstCategoryName(update.Categories),
+                                ReleaseDate = update.LastDeploymentChangeTime // might be null
+                            });
                         }
+
+                        resultText.AppendLine(hasSecurityUpdates ? "Yes" : "No");
                     }
+
+                    //await SaveUpdatesToDatabaseAsync(allUpdates);
                 }
                 catch (Exception ex)
                 {
-                    pendingUpdates.AppendLine($"Error retrieving updates: {ex.Message}");
+                    resultText.AppendLine($"Error retrieving updates: {ex.Message}");
                 }
                 finally
                 {
-                    if (updateSearcher != null) Marshal.ReleaseComObject(updateSearcher);
-                    if (updateSession != null) Marshal.ReleaseComObject(updateSession);
+
                     GC.Collect();
                     GC.WaitForPendingFinalizers();
                 }
 
-                return pendingUpdates.ToString();
+                return resultText.ToString();
             });
+        }
+
+        public async Task<string> GetCompanyNameAsync(string machineName)
+        {
+            string companyName = "Unknown Company"; // Default value if no match is found
+
+            try
+            {
+                var dbService = new DatabaseService();
+                string query = "SELECT CompanyName FROM computers WHERE machinename = @MachineName";
+                var parameters = new Dictionary<string, object>
+                {
+                    { "@MachineName", machineName }
+                };
+
+                var result = await dbService.ExecuteScalarAsync(query, parameters);
+                if (result != null)
+                {
+                    companyName = result.ToString();
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError($"Error fetching CompanyName: {ex.Message}");
+            }
+
+            return companyName;
+        }        
+
+        private string GetFirstCategoryName(dynamic categories)
+        {
+            try
+            {
+                if (categories != null && categories.Count > 0)
+                {
+                    return categories[0].Name;
+                }
+            }
+            catch { /* ignore */ }
+            return "Other";
+        }
+
+        public class UpdateRecord
+        {
+            public Guid UpdateID { get; set; }          // Main unique identifier (primary key in DB)
+            public string Name { get; set; }            // e.g., "2023-07 Cumulative Update..."
+            public string KBNumber { get; set; }        // e.g., "KB5026361" if available
+            public string UpdateType { get; set; }      // "Security", "Critical", etc.
+            public DateTime? ReleaseDate { get; set; }  // 'update.LastDeploymentChangeTime'
         }
     }
 }

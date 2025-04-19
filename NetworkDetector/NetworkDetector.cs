@@ -1,6 +1,6 @@
 using System;
 using System.Configuration;
-using System.Data.SqlClient;
+using Microsoft.Data.SqlClient;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
@@ -14,24 +14,41 @@ using Microsoft.Win32;
 using Microsoft.Win32.TaskScheduler;
 using Newtonsoft.Json.Linq;
 using Task = System.Threading.Tasks.Task;
+using ScheduledTask = Microsoft.Win32.TaskScheduler.Task;
 using Action = System.Action;
-
 using NetworkDetector.Class;
+using NetworkDetector.Helpers;
+using System.Net;
+using System.Runtime.InteropServices;
+using System.Collections.Concurrent;
+using System.Data;
+using static System.Windows.Forms.VisualStyles.VisualStyleElement;
+
+
 
 namespace NetworkDetector
 {
     public partial class NetworkDetector : Form
     {
+        private static readonly int WM_TASKBARCREATED = RegisterWindowMessage("TaskbarCreated");
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern int RegisterWindowMessage(string lpString);
+
+        private bool isNetworkDetectorDownloading = false;
+
+        private SystemData _systemData = new SystemData();
+
         // Fields read from App.config
-        private readonly int _tcpPort;
         private readonly string _hourlyTaskName;
         private readonly string _baseUrl;
         private readonly string _versionNumber;
         private readonly string _dansApp;
         private readonly string _callpoplite;
+        private readonly string _salessheet;
 
         private readonly DataFetcher dataFetcher;
-        private readonly WindowsSettingsManager _windowsSettingsManager;
+
         private CleanupManager _cleanupManager;
         private MaekoVersionUpdater _maekoVersionUpdater;
 
@@ -42,24 +59,29 @@ namespace NetworkDetector
         private ToolStripMenuItem VersionMenuItem;
         private ToolStripMenuItem TaskRun;
         private ToolStripMenuItem UpdateMenuItem;
-        private System.Windows.Forms.Timer intervalTimer;
-        private System.Windows.Forms.Timer cleanupTimer;
 
-        private static readonly HttpClient client = new HttpClient();
+        private System.Windows.Forms.Timer gatherTimer;
+        private System.Windows.Forms.Timer sendTimer;
+        private System.Windows.Forms.Timer cleanupTimer;
+        private System.Windows.Forms.Timer notifyIconTimer;        
+
+        private readonly CommandExecutor commandExecutor;
+        private readonly DatabaseService _databaseService = new DatabaseService();
+
+        private static ConcurrentDictionary<string, Task> activeDownloadTasks = new ConcurrentDictionary<string, Task>();
 
         public NetworkDetector()
         {
             InitializeComponent();
 
-            _tcpPort = int.Parse(ConfigurationManager.AppSettings["TcpPort"]);
             _hourlyTaskName = ConfigurationManager.AppSettings["HourlyTaskName"];
             _baseUrl = ConfigurationManager.AppSettings["BananaGoatsBaseUrl"];
             _versionNumber = ConfigurationManager.AppSettings["VersionNumber"];
             _dansApp = ConfigurationManager.AppSettings["DansApp"];
             _callpoplite = ConfigurationManager.AppSettings["CallPopLite"];
+            _salessheet = ConfigurationManager.AppSettings["SalesSheet"];
 
             dataFetcher = new DataFetcher(this);
-            _windowsSettingsManager = new WindowsSettingsManager(this);
 
             // 3. Set up NotifyIcon, ContextMenu, and other UI elements
             notifyIcon = new NotifyIcon();
@@ -84,46 +106,69 @@ namespace NetworkDetector
 
             this.WindowState = FormWindowState.Minimized;
             this.ShowInTaskbar = false;
-
             this.MaximizeBox = false;
             this.MinimizeBox = true;
 
-            // 4. Timer for sending data every 2 minutes
-            intervalTimer = new System.Windows.Forms.Timer
+            gatherTimer = new System.Windows.Forms.Timer
             {
-                Interval = 2 * 60 * 1000
+                Interval = 60 * 1000
             };
-            intervalTimer.Tick += SendData;
-            intervalTimer.Start();
+            gatherTimer.Tick += async (s, e) => await GatherDynamicDataAsync();
+            gatherTimer.Start();
+
+            sendTimer = new System.Windows.Forms.Timer
+            {
+                Interval = 15 * 1000
+            };
+            sendTimer.Tick += async (sender, e) => await SendData();
+            sendTimer.Start();
+
+            notifyIconTimer = new System.Windows.Forms.Timer
+            {
+                Interval = 15000
+            };
+            notifyIconTimer.Tick += (s, e) =>
+            {
+                if (notifyIcon == null || !notifyIcon.Visible)
+                {
+                    LogError("NotifyIcon missing. Recreating NotifyIcon.");
+                    RecreateNotifyIcon();
+                }
+            };
+            notifyIconTimer.Start();
 
             _cleanupManager = new CleanupManager(this, logTextBox)
             {
-                CleanupInterval = 6 * 60 * 60 * 1000 // e.g., 6 hours in ms
+                CleanupInterval = 6 * 60 * 60 * 1000
             };
-
             _cleanupManager.StartCleanup();
 
             string connectionString = ConfigurationManager.ConnectionStrings["SQL"]?.ConnectionString;
+
             _maekoVersionUpdater = new MaekoVersionUpdater(
                 connectionString,
                 LogError,
-                message => logTextBox.AppendText($"{DateTime.Now}: {message}\r\n")
-                );
+                message => SafeUpdate(() => logTextBox.AppendText($"{DateTime.Now}: {message}\r\n"))
+            );
 
+            try
+            {
+                commandExecutor = new CommandExecutor();
+            }
+            catch (InvalidOperationException ex)
+            {
 
-            this.Load += NetworkDetector_Load;
+                LogError($"Configuration Error: {ex.Message}");
+
+                return;
+            }
         }
 
         private async void NetworkDetector_Load(object sender, EventArgs e)
-        {
-            // Create scheduled task if not exists
-            if (!IsScheduledTaskExists("Network Detector"))
-            {
-                CreateScheduledTask();
-            }
+        {            
+            await GatherDynamicDataAsync();            
 
-            // Check Windows registry & GPO settings
-            _windowsSettingsManager.CheckGpoSettings();
+            CreateScheduledTask();
 
             if (IsScheduledTaskExists(_hourlyTaskName))
             {
@@ -134,13 +179,12 @@ namespace NetworkDetector
                 }
             }
 
-
             try
+
             {
                 string VersionNumber = Version.Text;
                 VersionMenuItem.Text = $"Version Number {VersionNumber}";
                 this.Text = $"Network Manager {VersionNumber}";
-
                 await StaticSpecsAsync();
             }
             catch (Exception ex)
@@ -155,29 +199,34 @@ namespace NetworkDetector
         {
             try
             {
-                // Gather basic system data
-                string machineNameValue = Environment.MachineName;
-                string cpuInfo = dataFetcher.GetCPUInfo();
-                string ramInfo = dataFetcher.GetRamInfo();
-                string windowsOS = dataFetcher.GetWindowsOS();
-                string buildNumber = dataFetcher.GetBuildNumber();
+                _systemData.MachineName = Environment.MachineName;
+                _systemData.CPU = dataFetcher.GetCPUInfo();
+                _systemData.Ram = dataFetcher.GetRamInfo();
+                _systemData.WindowsOS = dataFetcher.GetWindowsOS();
+                _systemData.BuildNumber = dataFetcher.GetBuildNumber();
+                _systemData.CompanyName = await dataFetcher.GetCompanyNameAsync(_systemData.MachineName);
+                _systemData.LatestSharePointFileDate = await dataFetcher.GetLatestSharepointFileDateAsync();
 
-                // Update UI
-                machineNameTextBox.Text = machineNameValue;
-                cpuInfoTextBox.Text = cpuInfo;
-                ramInfoTextBox.Text = ramInfo;
-                windowsOsTextBox.Text = windowsOS;
-                buildNumberTextBox.Text = buildNumber;
+                await CheckAndRetrieveLocationAsync();
 
-                logTextBox.Clear();
+                SafeUpdate(() =>
+                {
+                    machineNameTextBox.Text = _systemData.MachineName;
+                    cpuInfoTextBox.Text = _systemData.CPU;
+                    ramInfoTextBox.Text = _systemData.Ram;
+                    windowsOsTextBox.Text = _systemData.WindowsOS;
+                    buildNumberTextBox.Text = _systemData.BuildNumber;
+                    CompanyTextBox.Text = _systemData.CompanyName;
+                    latestFileDateTextBox.Text = _systemData.LatestSharePointFileDate;
+                    logTextBox.Clear();
+                });
 
-                // SharePoint info
-                string latestFileDate = await dataFetcher.GetLatestSharepointFileDateAsync();
-                latestFileDateTextBox.Text = latestFileDate;
+                _systemData.PendingUpdates = await dataFetcher.GetPendingUpdatesAsync();
 
-                // Pending updates
-                string pendingUpdates = await dataFetcher.GetPendingUpdatesAsync();
-                pendingUpdatesTextBox.Text = pendingUpdates;
+                SafeUpdate(() =>
+                {
+                    pendingUpdatesTextBox.Text = _systemData.PendingUpdates;
+                });
             }
             catch (Exception ex)
             {
@@ -189,39 +238,21 @@ namespace NetworkDetector
         {
             try
             {
-                (string wanIp, string isp) = await dataFetcher.GetWanIpAndIspAsync();
+                (string wanIp, string isp, bool mobile) = await dataFetcher.GetWanIpAndIspAsync();
 
-                // IP or ISP might fail—default to fallback text
-                string displayWanIp = !string.IsNullOrEmpty(wanIp) ? wanIp : "IP Failed";
-                string displayIsp = !string.IsNullOrEmpty(isp) ? isp : "ISP Failed";
+                _systemData.WanIp = !string.IsNullOrEmpty(wanIp) ? wanIp : "IP Failed";
+                _systemData.Isp = !string.IsNullOrEmpty(isp) ? isp : "ISP Failed";
+                _systemData.Mobile = mobile;
 
-                // Thread-safe UI update
-                if (wanIpTextBox.InvokeRequired)
-                {
-                    wanIpTextBox.Invoke(new Action(() =>
-                    {
-                        wanIpTextBox.Text = displayWanIp;
-                        ispTextBox.Text = displayIsp;
-                    }));
-                }
-                else
-                {
-                    wanIpTextBox.Text = displayWanIp;
-                    ispTextBox.Text = displayIsp;
-                }
+                _systemData.StorageInfo = dataFetcher.GetStorageInfo();
 
-                string storageInfo = dataFetcher.GetStorageInfo();
-                if (storageInfoTextBox.InvokeRequired)
+                SafeUpdate(() =>
                 {
-                    storageInfoTextBox.Invoke(new Action(() =>
-                    {
-                        storageInfoTextBox.Text = storageInfo;
-                    }));
-                }
-                else
-                {
-                    storageInfoTextBox.Text = storageInfo;
-                }
+                    wanIpTextBox.Text = _systemData.WanIp;
+                    ispTextBox.Text = _systemData.Isp;
+                    storageInfoTextBox.Text = _systemData.StorageInfo;
+                    textBox1.Text = mobile ? "Mobile" : "Not Mobile";
+                });
             }
             catch (Exception ex)
             {
@@ -229,91 +260,211 @@ namespace NetworkDetector
             }
         }
 
-        private async void SendData(object sender, EventArgs e)
+        private async Task SendData()
         {
             logTextBox.Clear();
+
+            await CheckAndRetrieveLocationAsync();
+
+            if (string.IsNullOrEmpty(_systemData.Location))
+            {
+                LogError("Location is null or empty. Aborting SendData() call.");
+                return;
+            }            
 
             if (!this.IsHandleCreated)
             {
                 return;
             }
 
-            // 1. Gather dynamic data
-            await GatherDynamicDataAsync();
+            string machineName = _systemData.MachineName;
 
-            // 2. Build data string
-            string machineName = machineNameTextBox.Text;
-            string cpuInfo = cpuInfoTextBox.Text;
-            string ramInfo = ramInfoTextBox.Text;
-            string wanIp = wanIpTextBox.Text;
-            string isp = ispTextBox.Text;
-            string storageInfo = storageInfoTextBox.Text;
-            string windowsOS = windowsOsTextBox.Text;
-            string buildNumber = buildNumberTextBox.Text;
-            string version = Version.Text; // from the control
-            string pendingUpdates = pendingUpdatesTextBox.Text;
-            string lastSharePointFile = latestFileDateTextBox.Text;
+            await _maekoVersionUpdater.CheckAndUpdateMaekoVersionsAsync(machineName);
+            await UpdateDatabaseAsync();            
 
-            // Prepare data
-            string gatheredData = $"(MainData)|{machineName}|{wanIp}|{isp}|{cpuInfo}|{ramInfo}|{storageInfo}|{windowsOS}|{buildNumber}|{version}|{pendingUpdates}|{lastSharePointFile}";
+            await CheckAndResetColumnAsync(machineName, "AppUpdate", _versionNumber, "Network Detector");
 
-            if (string.IsNullOrEmpty(gatheredData))
+            if (!isNetworkDetectorDownloading)
             {
-                logTextBox.AppendText("No data to send.\r\n");
-                return;
-            }
+                await Task.Delay(100000);
 
-            // IP address from user input (ipAddressTextBox)
-            string serverIp = ipAddressTextBox.Text;
+                await CheckAndResetColumnAsync(machineName, "TillUpdater", _dansApp, "Till Updater");
+                await CheckAndResetColumnAsync(machineName, "CallPopLite", _callpoplite, "Call Pop Lite");
+                await CheckAndResetColumnAsync(machineName, "SalesSheet", _salessheet, "Sales Sheet");
+                await CheckAndDownloadFormRefreshAsync(machineName);
+                await CheckAndRunCommandsAsync(machineName);
+                await CheckAndRunSpeedTestAsync(machineName);
+            }
+            else
+            {
+                SafeUpdate(() =>
+                    logTextBox.AppendText("Other updates skipped because Network Detector is still downloading.\r\n")
+                );
+            }         
+
+        }
+
+        private async Task UpdateDatabaseAsync()
+        {
+            // Gather data from the model
+            string machineName = _systemData.MachineName;
+            string store = _systemData.Location;
+            string cpuInfo = _systemData.CPU;
+            string ramInfo = _systemData.Ram;
+            string storageInfo = _systemData.StorageInfo;
+            string wanIp = _systemData.WanIp;
+            string isp = _systemData.Isp;
+            string windowsOS = _systemData.WindowsOS;
+            string buildNumber = _systemData.BuildNumber;
+
+            string version = _versionNumber;
+            string pendingUpdates = string.IsNullOrWhiteSpace(_systemData.PendingUpdates) ? "Failed" : _systemData.PendingUpdates;
+            string lastSharePointFile = string.IsNullOrWhiteSpace(_systemData.LatestSharePointFileDate) ? "Failed" : _systemData.LatestSharePointFileDate;
+            string clientVersion = Version.Text;
+
+            // Define the update query including the Mobile column
+            string updateQuery = @"
+                UPDATE TBPC
+                SET 
+                    Store = @Store,
+                    CPU = @CPU,
+                    Ram = @Ram,
+                    HHD = @HHD,
+                    IP = @IP,
+                    ISP = @ISP,
+                    OS = @OS,
+                    OS_Version = @OS_Version,
+                    Client_Version = @Client_Version,
+                    OS_Updates = @OS_Updates,
+                    Sharepoint_Sync = @Sharepoint_Sync,
+                    Mobile = @Mobile,
+                    Pulse_Time = GETDATE()
+                WHERE Name = @Name;";
+
+            // Prepare parameters, now including Mobile
+            var parameters = new Dictionary<string, object>
+                {
+                    { "@Name", machineName },
+                    { "@Store", _systemData.Location ?? "Unknown Store" },
+                    { "@CPU", _systemData.CPU ?? "Unknown CPU" },
+                    { "@Ram", _systemData.Ram ?? "Unknown RAM" },
+                    { "@HHD", _systemData.StorageInfo ?? "Unknown Storage" },
+                    { "@IP", _systemData.WanIp ?? "Unknown IP" },
+                    { "@ISP", _systemData.Isp ?? "Unknown ISP" },
+                    { "@OS", _systemData.WindowsOS ?? "Unknown OS" },
+                    { "@OS_Version", _systemData.BuildNumber ?? "Unknown Build" },
+                    { "@Client_Version", clientVersion ?? "Unknown Client Version" },
+                    { "@OS_Updates", _systemData.PendingUpdates ?? "None" },
+                    { "@Sharepoint_Sync", _systemData.LatestSharePointFileDate ?? "No Date" },
+                    { "@Mobile", _systemData.Mobile }
+                };
 
             try
             {
-                using (var tcpClient = new TcpClient())
+                // Attempt to update first
+                int rowsAffected = await _databaseService.ExecuteNonQueryAsync(updateQuery, parameters).ConfigureAwait(false);
+                if (rowsAffected == 0)
                 {
-                    logTextBox.AppendText($"Attempting to connect to server at {serverIp}:{_tcpPort}\r\n");
+                    // Define the insert query if update did not affect any rows, now including Mobile
+                    string insertQuery = @"
+                INSERT INTO TBPC 
+                (
+                    Name, Store, CPU, Ram, HHD, IP, ISP, OS, OS_Version, 
+                    Client_Version, OS_Updates, Sharepoint_Sync, Mobile, Pulse_Time
+                )
+                VALUES 
+                (
+                    @Name, @Store, @CPU, @Ram, @HHD, @IP, @ISP, @OS, @OS_Version, 
+                    @Client_Version, @OS_Updates, @Sharepoint_Sync, @Mobile, GETDATE()
+                );";
 
-                    // 3. Connect & send
-                    await tcpClient.ConnectAsync(serverIp, _tcpPort);
-                    logTextBox.AppendText("Connected to server\r\n");
-
-                    using (var stream = tcpClient.GetStream())
+                    int insertRows = await _databaseService.ExecuteNonQueryAsync(insertQuery, parameters).ConfigureAwait(false);
+                    SafeUpdate(() =>
                     {
-                        byte[] data = Encoding.UTF8.GetBytes(gatheredData);
-                        await stream.WriteAsync(data, 0, data.Length);
-                        logTextBox.AppendText("Data Sent");
-
-                        // 4. Get response
-                        byte[] buffer = new byte[1024];
-                        int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
-                        string response = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-                        logTextBox.AppendText($"Received: {response}\r\n");
-                    }
-
-                    tcpClient.Close();
-
-                    // 5. Check DB columns for updates
-                    await CheckAndUpdateTillUpdaterColumn(machineName);
-                    await CheckAndUpdateCallPopLiteColumn(machineName);
-                    await CheckAndUpdateAppUpdateColumn(machineName);
-
-                    await _maekoVersionUpdater.CheckAndUpdateMaekoVersionsAsync(machineName);
-
-
+                        if (insertRows > 0)
+                        {
+                            LogError("No matching record found. Inserted new record successfully.");
+                        }
+                        else
+                        {
+                            LogError("Insert operation did not affect any rows.");
+                        }
+                    });
                 }
-            }
-            catch (SocketException ex)
-            {
-                LogError($"SocketException: {ex.Message}");
+                else
+                {
+                    SafeUpdate(() => LogError("Database updated successfully."));
+                }
             }
             catch (Exception ex)
             {
-                LogError($"Exception: {ex.Message}");
+                LogError($"Database update/insert error: {ex.Message}");
+            }
+        }
+
+        private async Task CheckAndRetrieveLocationAsync()
+        {
+            string machineName = _systemData.MachineName;
+            string location = null;
+
+            try
+            {
+                // Create an instance of the DatabaseService
+                var dbService = new DatabaseService();
+
+                // Define the select query and parameters
+                string selectQuery = "SELECT Location FROM Computers WHERE MachineName = @MachineName";
+                var parameters = new Dictionary<string, object>
+                    {
+                        { "@MachineName", machineName }
+                    };
+
+                // Try to retrieve the location for the current machine
+                object result = await dbService.ExecuteScalarAsync(selectQuery, parameters).ConfigureAwait(false);
+                if (result != null && result != DBNull.Value && !string.IsNullOrWhiteSpace(result.ToString()))
+                {
+                    location = result.ToString();
+                }
+
+                // If no record found or the location is empty, insert or update to set it to "Unknown"
+                if (string.IsNullOrWhiteSpace(location))
+                {
+                    string insertOrUpdateQuery = @"
+                        IF NOT EXISTS (SELECT 1 FROM Computers WHERE MachineName = @MachineName)
+                        BEGIN
+                            INSERT INTO Computers (MachineName, Location) 
+                            VALUES (@MachineName, 'Unknown')
+                        END
+                        ELSE
+                        BEGIN
+                            UPDATE Computers SET Location = 'Unknown' WHERE MachineName = @MachineName
+                        END";
+                    await dbService.ExecuteNonQueryAsync(insertOrUpdateQuery, parameters).ConfigureAwait(false);
+
+                    // Re-read the location value
+                    result = await dbService.ExecuteScalarAsync(selectQuery, parameters).ConfigureAwait(false);
+                    if (result != null && result != DBNull.Value)
+                    {
+                        location = result.ToString();
+                    }
+                }
+
+                // Update the model and UI
+                _systemData.Location = location;
+                SafeUpdate(() =>
+                {
+                    LocationTextBox.Text = location ?? string.Empty;
+                });
+            }
+            catch (Exception ex)
+            {
+                LogError($"Error checking/retrieving location: {ex.Message}");
             }
         }
 
         private async void SendButton_Click(object sender, EventArgs e)
         {
-            SendData(sender, e);
+            SendData();
         }
 
         #endregion
@@ -322,47 +473,57 @@ namespace NetworkDetector
 
         private void CreateScheduledTask()
         {
-            RemoveFromStartup();
-
             try
             {
                 string taskName = "Network Detector";
                 string exePath = @"C:\Network Detector\NetworkDetector.exe";
 
-                string taskCreateCommand =
-                    $"schtasks /create /tn \"{taskName}\" /tr \"\\\"{exePath}\\\"\" /sc onlogon /rl highest /f";
-
-                var psi = new ProcessStartInfo
+                using (TaskService ts = new TaskService())
                 {
-                    FileName = "cmd.exe",
-                    Arguments = $"/c {taskCreateCommand}",
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    Verb = "runas",
-                    CreateNoWindow = true
-                };
+                    // Create a new task definition
+                    TaskDefinition td = ts.NewTask();
+                    td.RegistrationInfo.Description = "Runs Network Detector on user logon with highest privileges.";
 
-                using (Process process = Process.Start(psi))
-                {
-                    process.WaitForExit();
+                    // Set the trigger to log on
+                    td.Triggers.Add(new LogonTrigger());
 
-                    string output = process.StandardOutput.ReadToEnd();
-                    string error = process.StandardError.ReadToEnd();
+                    // Set the action to run the executable
+                    td.Actions.Add(new ExecAction(exePath, null, Path.GetDirectoryName(exePath)));
 
-                    if (process.ExitCode != 0)
-                    {
-                        MessageBox.Show($"Failed to create scheduled task. Error: {error}",
-                            "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    }
+                    // Set the task to run with highest privileges
+                    td.Principal.RunLevel = TaskRunLevel.Highest;
 
-                    Console.WriteLine("Output: " + output);
-                    Console.WriteLine("Error: " + error);
+                    // Configure settings to ensure the task runs regardless of power conditions
+                    td.Settings.DisallowStartIfOnBatteries = false; // Allow task to start on battery
+                    td.Settings.StopIfGoingOnBatteries = false;     // Do not stop the task if the system switches to battery
+                    td.Settings.AllowHardTerminate = true;
+                    td.Settings.StartWhenAvailable = true;
+                    td.Settings.Hidden = false;
+
+                    // Retrieve the current user's username
+                    string currentUser = ts.UserName;
+
+                    // Register the task in the root folder with CreateOrUpdate flag
+                    ts.RootFolder.RegisterTaskDefinition(
+                        taskName,
+                        td,
+                        TaskCreation.CreateOrUpdate,
+                        currentUser,    // Corrected from TaskService.Instance.User to ts.UserName
+                        null,
+                        TaskLogonType.InteractiveToken);
+
+                    LogError($"Scheduled task '{taskName}' created or updated successfully.");
                 }
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                LogError($"Permission error while creating/updating scheduled task: {ex.Message}");
+                MessageBox.Show($"Permission error: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             catch (Exception ex)
             {
-                LogError($"An exception occurred: {ex.Message}");
+                LogError($"An exception occurred while creating/updating scheduled task: {ex.Message}");
+                MessageBox.Show($"An error occurred: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -372,23 +533,6 @@ namespace NetworkDetector
             {
                 Microsoft.Win32.TaskScheduler.Task task = ts.FindTask(taskName, true);
                 return task != null;
-            }
-        }
-
-        private void RemoveFromStartup()
-        {
-            string startupPath = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
-            string shortcutPath = Path.Combine(startupPath, "NetworkDetector.lnk");
-            if (File.Exists(shortcutPath))
-            {
-                try
-                {
-                    File.Delete(shortcutPath);
-                }
-                catch (Exception ex)
-                {
-                    LogError($"Failed to remove startup shortcut: {ex.Message}");
-                }
             }
         }
 
@@ -410,50 +554,32 @@ namespace NetworkDetector
             this.ShowInTaskbar = true;
         }
 
-        private void HideForm(object sender, EventArgs e)
-        {
-            this.Hide();
-            this.ShowInTaskbar = false;
-        }
-
-        private void checkBox1_CheckedChanged(object sender, EventArgs e)
-        {
-            ipAddressTextBox.ReadOnly = !checkBox1.Checked;
-        }
-
         private void button4_Click(object sender, EventArgs e)
         {
-            // Example: create a .bat file and schedule it
             string batFilePath = @"C:\Scripts\Maeko to Onedrive.bat";
 
             try
             {
-                // Ensure that the directory 'C:\Scripts' exists
                 string scriptsDirectory = Path.GetDirectoryName(batFilePath);
                 if (!Directory.Exists(scriptsDirectory))
                 {
                     Directory.CreateDirectory(scriptsDirectory);
                 }
 
-                // Get the store name from the textbox
                 string storeName = storenametxt.Text;
 
-                // Create the .bat file content
                 string batFileContent =
                     @"xcopy C:\Maeko\UTILS ""C:\Users\admin\OneDrive - Ableworld UK\" + storeName + @""" /i /d /e /c /y"
                     + Environment.NewLine +
                     @"xcopy C:\Maeko\UTILS ""C:\Users\admin\OneDrive - Ableworld UK\" + storeName + @" Sharepoint"" /i /d /e /c /y";
 
-                // Write the content to the .bat file
                 File.WriteAllText(batFilePath, batFileContent);
 
-                // Create a new task definition
                 using (TaskService ts = new TaskService())
                 {
                     TaskDefinition td = ts.NewTask();
                     td.RegistrationInfo.Description = "Runs a Maeko to Onedrive.bat file every hour every day";
 
-                    // Start at 09:00
                     DateTime startTime = DateTime.Today.AddHours(9);
 
                     DailyTrigger dailyTrigger = new DailyTrigger
@@ -477,166 +603,149 @@ namespace NetworkDetector
             }
         }
 
-        private void Button6_Click(object sender, EventArgs e)
-        {
-            panel1.Visible = true;
-            panel3.Visible = false;
-        }
-
         private async void button7_Click(object sender, EventArgs e)
         {
-            // Download updated "Network Detector"
             await DownloadVersionFolderAsync(_versionNumber, "Network Detector");
-        }
-
-        private void button8_Click(object sender, EventArgs e)
-        {
-            panel1.Visible = false;
-            panel3.Visible = true;
         }
 
         private async void button1_Click(object sender, EventArgs e)
         {
             string machineName = machineNameTextBox.Text;
-            await CheckAndUpdateTillUpdaterColumn(machineName);
-            await CheckAndUpdateCallPopLiteColumn(machineName);
-            await CheckAndUpdateAppUpdateColumn(machineName);
-
-
-
+            await CheckAndResetColumnAsync(machineName, "AppUpdate", _versionNumber, "Network Detector");
+            await CheckAndResetColumnAsync(machineName, "TillUpdater", _dansApp, "Till Updater");
+            await CheckAndResetColumnAsync(machineName, "CallPopLite", _callpoplite, "Call Pop Lite");
+            await CheckAndResetColumnAsync(machineName, "SalesSheet", _salessheet, "Sales Sheet");
+            await CheckAndDownloadFormRefreshAsync(machineName);
+            await CheckAndRunCommandsAsync(machineName);
         }
 
-        private void button2_Click(object sender, EventArgs e)
+        private void button9_Click(object sender, EventArgs e)
         {
-            _windowsSettingsManager.ResetFeatureUpdateVersionPolicy();
-            _windowsSettingsManager.WindowsUpdate();
-            _windowsSettingsManager.CheckGpoSettings();
+            Commands commandsForm = new Commands();
+
+            commandsForm.Show();
+        }
+
+        private async void button2_Click(object sender, EventArgs e)
+        {
+            // Disable Button2 to prevent multiple clicks
+            button2.Enabled = false;
+
+            try
+            {
+                // Create a Progress<string> instance to handle progress updates
+                var progress = new Progress<string>(message =>
+                {
+                    // Append progress messages to the logTextBox
+                    SafeUpdate(() => logTextBox.AppendText($"{message}\r\n"));
+                });
+
+                // Execute all commands asynchronously
+                bool success = await commandExecutor.ExecuteAllCommandsAsync(progress);
+
+                // Log the final status
+                if (success)
+                {
+                    SafeUpdate(() => logTextBox.AppendText($"All commands executed successfully.\r\n"));
+                }
+                else
+                {
+                    SafeUpdate(() => logTextBox.AppendText($"Some commands failed to execute. Check logs for details.\r\n"));
+                }
+            }
+            catch (Exception ex)
+            {
+                // Log any unexpected exceptions
+                SafeUpdate(() => logTextBox.AppendText($"Error executing all commands: {ex.Message}\r\n"));
+            }
+            finally
+            {
+                // Re-enable Button2 after operation completes
+                button2.Enabled = true;
+            }
         }
 
         #endregion
 
         #region Updater
 
-        private async Task CheckAndUpdateAppUpdateColumn(string machineName)
+        private async Task CheckAndResetColumnAsync(string machineName, string columnName, string downloadVersion, string downloadFolderName)
         {
+            string downloadKey = $"{machineName}_{columnName}_{downloadVersion}";
+
+            if (activeDownloadTasks.ContainsKey(downloadKey))
+            {
+                LogError($"Download for {downloadKey} is already in progress; skipping duplicate request.");
+                return;
+            }
+
             string connectionString = ConfigurationManager.ConnectionStrings["SQL"]?.ConnectionString;
 
             try
             {
                 using (SqlConnection connection = new SqlConnection(connectionString))
                 {
-                    await connection.OpenAsync();
-
-                    string selectQuery = "SELECT AppUpdate FROM Computers WHERE MachineName = @MachineName";
-                    string updateQuery = "UPDATE Computers SET AppUpdate = 'No' WHERE MachineName = @MachineName";
-
+                    await connection.OpenAsync().ConfigureAwait(false);
+                    // Check if the column is set to "Yes"
+                    string selectQuery = $"SELECT {columnName} FROM Computers WHERE MachineName = @MachineName";
                     using (SqlCommand selectCommand = new SqlCommand(selectQuery, connection))
                     {
                         selectCommand.Parameters.AddWithValue("@MachineName", machineName);
-                        var appUpdateValue = await selectCommand.ExecuteScalarAsync();
+                        var value = await selectCommand.ExecuteScalarAsync().ConfigureAwait(false);
 
-                        if (appUpdateValue != null
-                            && appUpdateValue.ToString().Equals("Yes", StringComparison.OrdinalIgnoreCase))
+                        if (value != null && value.ToString().Equals("Yes", StringComparison.OrdinalIgnoreCase))
                         {
-                            using (SqlCommand updateCommand = new SqlCommand(updateQuery, connection))
+                            // Prevent other downloads if Network Detector is already busy (for non-AppUpdate columns)
+                            if (columnName != "AppUpdate" && isNetworkDetectorDownloading)
                             {
-                                updateCommand.Parameters.AddWithValue("@MachineName", machineName);
-                                await updateCommand.ExecuteNonQueryAsync();
-
-                                logTextBox.AppendText($"Update Requested for : {machineName}.\r\n");
-                                await DownloadVersionFolderAsync(_versionNumber, "Network Detector");
+                                SafeUpdate(() => logTextBox.AppendText($"Skipping {columnName} because Network Detector is downloading.\r\n"));
+                                return;
                             }
+
+                            if (columnName == "AppUpdate")
+                            {
+                                isNetworkDetectorDownloading = true;
+                            }
+
+                            SafeUpdate(() => logTextBox.AppendText($"{columnName} update requested for: {machineName}.\r\n"));
+
+                            // Start the download task and add it to our active downloads dictionary.
+                            Task downloadTask = DownloadVersionFolderAsync(downloadVersion, downloadFolderName);
+                            if (!activeDownloadTasks.TryAdd(downloadKey, downloadTask))
+                            {
+                                LogError($"Failed to add download task for {downloadKey} to active downloads.");
+                                return;
+                            }
+
+                            // Await the download
+                            await downloadTask;
+                            // Remove the completed task
+                            activeDownloadTasks.TryRemove(downloadKey, out _);
+
+                            if (columnName == "AppUpdate")
+                            {
+                                isNetworkDetectorDownloading = false;
+                                await Task.Delay(20000); // 20-second delay
+                            }
+                        }
+                        else
+                        {
+                            LogError($"Value Set To No For {columnName}");
                         }
                     }
                 }
             }
             catch (Exception ex)
             {
-                LogError($"Database Exception: {ex.Message}. Skipping update and moving on.");
-            }
-        }
-
-        private async Task CheckAndUpdateTillUpdaterColumn(string machineName)
-        {
-            string connectionString = ConfigurationManager.ConnectionStrings["SQL"]?.ConnectionString;
-
-            try
-            {
-                using (SqlConnection connection = new SqlConnection(connectionString))
-                {
-                    await connection.OpenAsync();
-
-                    string selectQuery = "SELECT TillUpdater FROM Computers WHERE MachineName = @MachineName";
-                    string updateQuery = "UPDATE Computers SET TillUpdater = 'No' WHERE MachineName = @MachineName";
-
-                    using (SqlCommand selectCommand = new SqlCommand(selectQuery, connection))
-                    {
-                        selectCommand.Parameters.AddWithValue("@MachineName", machineName);
-                        var appUpdateValue = await selectCommand.ExecuteScalarAsync();
-
-                        if (appUpdateValue != null
-                            && appUpdateValue.ToString().Equals("Yes", StringComparison.OrdinalIgnoreCase))
-                        {
-                            using (SqlCommand updateCommand = new SqlCommand(updateQuery, connection))
-                            {
-                                updateCommand.Parameters.AddWithValue("@MachineName", machineName);
-                                await updateCommand.ExecuteNonQueryAsync();
-
-                                logTextBox.AppendText($"Till Updater Update Requested for : {machineName}.\r\n");
-                                await DownloadVersionFolderAsync(_dansApp, "Till Updater");
-                            }
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                LogError($"Database Exception: {ex.Message}. Skipping update and moving on.");
-            }
-        }
-
-        private async Task CheckAndUpdateCallPopLiteColumn(string machineName)
-        {
-            string connectionString = ConfigurationManager.ConnectionStrings["SQL"]?.ConnectionString;
-
-            try
-            {
-                using (SqlConnection connection = new SqlConnection(connectionString))
-                {
-                    await connection.OpenAsync();
-
-                    string selectQuery = "SELECT CallPopLite FROM Computers WHERE MachineName = @MachineName";
-                    string updateQuery = "UPDATE Computers SET CallPopLite = 'No' WHERE MachineName = @MachineName";
-
-                    using (SqlCommand selectCommand = new SqlCommand(selectQuery, connection))
-                    {
-                        selectCommand.Parameters.AddWithValue("@MachineName", machineName);
-                        var appUpdateValue = await selectCommand.ExecuteScalarAsync();
-
-                        if (appUpdateValue != null
-                            && appUpdateValue.ToString().Equals("Yes", StringComparison.OrdinalIgnoreCase))
-                        {
-                            using (SqlCommand updateCommand = new SqlCommand(updateQuery, connection))
-                            {
-                                updateCommand.Parameters.AddWithValue("@MachineName", machineName);
-                                await updateCommand.ExecuteNonQueryAsync();
-
-                                logTextBox.AppendText($"Till Updater Update Requested for : {machineName}.\r\n");
-                                await DownloadVersionFolderAsync(_callpoplite, "Call Pop Lite");
-                            }
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                LogError($"Database Exception: {ex.Message}. Skipping update and moving on.");
+                LogError($"Database Exception in {columnName}: {ex.Message}. Skipping update.");
             }
         }
 
         private async Task DownloadVersionFolderAsync(string version, string folderName)
         {
             string downloadUrl = $"{_baseUrl}BG%20Menu/{Uri.EscapeDataString(version)}";
+            string machineName = Environment.MachineName;
+
             string appDataPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), folderName);
             if (!Directory.Exists(appDataPath))
             {
@@ -646,81 +755,299 @@ namespace NetworkDetector
             string tempZipFile = Path.Combine(Path.GetTempPath(), $"{version}.zip");
             string tempExtractPath = Path.Combine(Path.GetTempPath(), $"Extracted_{version}");
 
-            try
+            int maxRetries = 3;
+            TimeSpan backoffDelay = TimeSpan.FromSeconds(30);
+            bool downloadSucceeded = false;
+
+            for (int attempt = 1; attempt <= maxRetries; attempt++)
             {
-                // -------------------------------
-                // 1) RETRY DOWNLOAD PART
-                // -------------------------------
-                int maxRetries = 3;
-                TimeSpan backoffDelay = TimeSpan.FromSeconds(30);
-
-                bool downloadSucceeded = false;
-
-                for (int attempt = 1; attempt <= maxRetries; attempt++)
+                // Create a CancellationTokenSource for the current download attempt.
+                using (var cts = new CancellationTokenSource())
                 {
                     try
                     {
-                        using (HttpClient client = new HttpClient())
-                        {
-                            // Possibly increase the timeout, but still keep it finite
-                            client.Timeout = TimeSpan.FromMinutes(10);
+                        var request = new HttpRequestMessage(HttpMethod.Get, downloadUrl);
+                        request.Headers.Add("X-MachineName", machineName);
 
-                            LogError($"Download attempt {attempt} starting...");
+                        LogError($"Download attempt {attempt} starting...");
+                        HttpResponseMessage response = await SystemData.Client.SendAsync(request, cts.Token).ConfigureAwait(false);
+                        response.EnsureSuccessStatusCode();
 
-                            HttpResponseMessage response = await client.GetAsync(downloadUrl);
-                            response.EnsureSuccessStatusCode(); // Throws if not 2xx
+                        byte[] fileData = await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+                        File.WriteAllBytes(tempZipFile, fileData);
 
-                            byte[] fileData = await response.Content.ReadAsByteArrayAsync();
-                            File.WriteAllBytes(tempZipFile, fileData);
-
-                            // If we get here, download succeeded
-                            downloadSucceeded = true;
-                            LogError("Download succeeded!");
-                            break;
-                        }
+                        downloadSucceeded = true;
+                        LogError("Download succeeded!");
+                        break;
                     }
-                    catch (HttpRequestException ex) when (attempt < maxRetries)
-                    {
-                        // If it’s a network/server error, we can log and wait before retrying
-                        LogError($"Download attempt {attempt} failed: {ex.Message}. Retrying in {backoffDelay.TotalSeconds} seconds...");
-                        await Task.Delay(backoffDelay);
-                    }
+                    // Catch TaskCanceledException for retries
                     catch (TaskCanceledException ex) when (attempt < maxRetries)
                     {
-                        // Occurs if .NET canceled due to timeout
-                        LogError($"Download timed out on attempt {attempt}: {ex.Message}. Retrying in {backoffDelay.TotalSeconds} seconds...");
-                        await Task.Delay(backoffDelay);
+                        LogError($"Download timed out or was canceled on attempt {attempt}: {ex.Message}. Retrying in {backoffDelay.TotalSeconds} seconds...");
+                        await Task.Delay(backoffDelay).ConfigureAwait(false);
+                    }
+                    // Catch HttpRequestException for retries
+                    catch (HttpRequestException ex) when (attempt < maxRetries)
+                    {
+                        LogError($"Download attempt {attempt} failed: {ex.Message}. Retrying in {backoffDelay.TotalSeconds} seconds...");
+                        await Task.Delay(backoffDelay).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException ex)
+                    {
+                        LogError($"Download attempt {attempt} was canceled: {ex.Message}");
+                        return;
                     }
                 }
+            }
 
-                // If after all retries we still haven't succeeded, bail out
-                if (!downloadSucceeded)
-                {
-                    LogError("All download attempts have failed. Aborting.");
-                    return;
-                }
+            if (!downloadSucceeded)
+            {
+                LogError("All download attempts have failed. Aborting.");
+                return;
+            }
 
-                // -----------------------------------------
-                // 2) PROCESS THE DOWNLOADED FILE (if any)
-                // -----------------------------------------
+            // Process the downloaded zip (extract, copy, run .bat, etc.)
+            try
+            {
                 ZipFile.ExtractToDirectory(tempZipFile, tempExtractPath);
-
-                CopyFilesRecursively(
-                    new DirectoryInfo(tempExtractPath),
-                    new DirectoryInfo(appDataPath));
+                CopyFilesRecursively(new DirectoryInfo(tempExtractPath), new DirectoryInfo(appDataPath));
 
                 File.Delete(tempZipFile);
                 Directory.Delete(tempExtractPath, true);
 
-                // If the extracted folder has an Update.bat, run it
+                // Optionally run an update batch file.
                 string batFilePath = Path.Combine(appDataPath, "Update.bat");
                 RunBatFile(batFilePath);
             }
             catch (Exception ex)
             {
-                LogError($"Error downloading the version folder: {ex.Message}");
+                LogError($"Error processing downloaded files: {ex.Message}");
             }
         }
+
+        private async Task CheckAndDownloadFormRefreshAsync(string machineName)
+        {
+            try
+            {
+                var dbService = new DatabaseService();
+
+                var parameters = new Dictionary<string, object>
+                    {
+                        { "@MachineName", machineName }
+                    };
+
+                // Query the Computers table for FormRefresh and CompanyName.
+                string selectQuery = @"
+            SELECT FormRefresh, CompanyName 
+            FROM Computers 
+            WHERE MachineName = @MachineName";
+                DataTable dt = await dbService.ExecuteQueryAsync(selectQuery, parameters).ConfigureAwait(false);
+
+                string formRefreshStatus = null;
+                string companyName = null;
+                if (dt.Rows.Count > 0)
+                {
+                    formRefreshStatus = dt.Rows[0]["FormRefresh"]?.ToString();
+                    companyName = dt.Rows[0]["CompanyName"]?.ToString();
+                }
+
+                // If FormRefresh is set to "Yes" and a company name exists, perform the download.
+                if (string.Equals(formRefreshStatus, "Yes", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(companyName))
+                {
+                    LogError($"FormRefresh is set to 'Yes' for company: {companyName}. Initiating download...");
+
+                    string downloadUrl = $"{_baseUrl}Forms/{Uri.EscapeDataString(companyName)}";
+
+                    string appDataPath = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                        "Network Detector",
+                        companyName
+                    );
+                    Directory.CreateDirectory(appDataPath);
+
+                    string tempZipPath = Path.Combine(Path.GetTempPath(), $"{companyName}.zip");
+                    string tempExtractPath = Path.Combine(Path.GetTempPath(), $"Extracted_{companyName}");
+
+                    try
+                    {
+                        var request = new HttpRequestMessage(HttpMethod.Get, downloadUrl);
+                        request.Headers.Add("X-MachineName", machineName);
+
+                        LogError($"Starting download from {downloadUrl}...");
+                        HttpResponseMessage response = await SystemData.Client.SendAsync(request).ConfigureAwait(false);
+                        response.EnsureSuccessStatusCode();
+                        byte[] zipData = await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+                        await File.WriteAllBytesAsync(tempZipPath, zipData).ConfigureAwait(false);
+                        LogError("Download completed successfully.");
+
+                        LogError($"Extracting ZIP file to {tempExtractPath}...");
+                        ZipFile.ExtractToDirectory(tempZipPath, tempExtractPath);
+
+                        CopyFilesRecursively(new DirectoryInfo(tempExtractPath), new DirectoryInfo(appDataPath));
+                        LogError("Files copied to AppData successfully.");
+
+                        string targetPath = @"C:\Maeko\UTILS\DocTemplates";
+                        Directory.CreateDirectory(targetPath);
+
+                        CopyFilesRecursively(new DirectoryInfo(appDataPath), new DirectoryInfo(targetPath));
+                        LogError($"Files copied to target directory {targetPath} successfully.");
+                    }
+                    catch (Exception ex)
+                    {
+                        LogError($"Error during download or extraction: {ex.Message}");
+                    }
+                    finally
+                    {
+                        // Clean up temporary files.
+                        if (File.Exists(tempZipPath))
+                        {
+                            try
+                            {
+                                File.Delete(tempZipPath);
+                                LogError($"Deleted temporary ZIP file: {tempZipPath}");
+                            }
+                            catch (Exception ex)
+                            {
+                                LogError($"Error deleting temporary ZIP file: {ex.Message}");
+                            }
+                        }
+                        if (Directory.Exists(tempExtractPath))
+                        {
+                            try
+                            {
+                                Directory.Delete(tempExtractPath, true);
+                                LogError($"Deleted temporary extraction folder: {tempExtractPath}");
+                            }
+                            catch (Exception ex)
+                            {
+                                LogError($"Error deleting temporary extraction folder: {ex.Message}");
+                            }
+                        }
+                    }
+
+                    // Reset the FormRefresh flag to "No" in the database.
+                    string updateQuery = "UPDATE Computers SET FormRefresh = 'No' WHERE MachineName = @MachineName";
+                    int rowsAffected = await dbService.ExecuteNonQueryAsync(updateQuery, parameters).ConfigureAwait(false);
+                    if (rowsAffected > 0)
+                    {
+                        LogError("FormRefresh flag reset to 'No' successfully.");
+                    }
+                    else
+                    {
+                        LogError("Failed to reset FormRefresh flag.");
+                    }
+                }
+                else
+                {
+                    LogError($"Value Set To No For Form Refresh");
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError($"Error in CheckAndDownloadFormRefreshAsync: {ex.Message}");
+            }
+        }
+
+        private async Task CheckAndRunCommandsAsync(string machineName)
+        {
+            var dbService = new DatabaseService();
+
+            try
+            {
+                string selectQuery = "SELECT Commands FROM Computers WHERE MachineName = @MachineName";
+                var parameters = new Dictionary<string, object>
+                    {
+                        { "@MachineName", machineName }
+                    };
+
+                object result = await dbService.ExecuteScalarAsync(selectQuery, parameters).ConfigureAwait(false);
+                string commandsStatus = result != null && result != DBNull.Value ? result.ToString() : string.Empty;
+
+                // If the flag is set to "Yes", execute all commands.
+                if (!string.IsNullOrWhiteSpace(commandsStatus) &&
+                    commandsStatus.Trim().Equals("Yes", StringComparison.OrdinalIgnoreCase))
+                {
+                    LogError($"Commands flag is set to 'Yes' for machine {machineName}. Executing commands...");
+
+                    // Create a progress reporter to capture output messages.
+                    var progress = new Progress<string>(message =>
+                    {
+                        // Append progress messages to the logTextBox on the UI thread.
+                        SafeUpdate(() => logTextBox.AppendText($"{message}\r\n"));
+                    });
+
+                    // Execute all commands using your existing commandExecutor.
+                    bool success = await commandExecutor.ExecuteAllCommandsAsync(progress);
+                    if (success)
+                    {
+                        LogError("All commands executed successfully.");
+                    }
+                    else
+                    {
+                        LogError("Some commands failed to execute. Check logs for details.");
+                    }
+
+                    // Update the Commands flag to "No".
+                    string updateQuery = "UPDATE Computers SET Commands = 'No' WHERE MachineName = @MachineName";
+                    int rowsAffected = await dbService.ExecuteNonQueryAsync(updateQuery, parameters).ConfigureAwait(false);
+                    if (rowsAffected > 0)
+                    {
+                        LogError("Commands flag reset to 'No' successfully.");
+                    }
+                    else
+                    {
+                        LogError("Failed to reset Commands flag.");
+                    }
+                }
+                else
+                {
+                    LogError($"Value Set To No For Running Commands");
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError($"Error in CheckAndRunCommandsAsync: {ex.Message}");
+            }
+        }
+
+        private async Task CheckAndRunSpeedTestAsync(string machineName)
+        {
+            try
+            {
+                var dbService = new DatabaseService();
+                var parameters = new Dictionary<string, object>
+                {
+                    { "@MachineName", machineName }
+                };
+
+                string selectQuery = "SELECT SpeedTest FROM Computers WHERE MachineName = @MachineName";
+                object result = await dbService.ExecuteScalarAsync(selectQuery, parameters).ConfigureAwait(false);
+
+                if (result != null && result.ToString().Equals("Yes", StringComparison.OrdinalIgnoreCase))
+                {
+                    string updateQuery = "UPDATE Computers SET SpeedTest = 'No' WHERE MachineName = @MachineName";
+                    await dbService.ExecuteNonQueryAsync(updateQuery, parameters).ConfigureAwait(false);
+
+                    try
+                    {
+                        SpeedTest();
+                    }
+                    catch (Exception ex)
+                    {
+                        LogError($"Error running SpeedTest: {ex.Message}");
+                    }
+                }
+                else
+                {
+                    LogError($"Value Set To No For Speed Test");
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError($"Error in CheckAndRunSpeedTestAsync: {ex.Message}");
+            }
+        }
+
 
         private void CopyFilesRecursively(DirectoryInfo source, DirectoryInfo target)
         {
@@ -747,6 +1074,7 @@ namespace NetworkDetector
                     {
                         FileName = batFilePath,
                         UseShellExecute = true,
+                        WindowStyle = ProcessWindowStyle.Hidden,
                         Verb = "runas"
                     };
                     Process.Start(processInfo);
@@ -762,28 +1090,29 @@ namespace NetworkDetector
             }
         }
 
-
         #endregion
 
         #region Helper Methods
 
         public void LogError(string message)
         {
-            AppendLog($"ERROR: {message}");
+            AppendLog($"{message}");
         }
 
         private void AppendLog(string message)
         {
-            if (logTextBox.InvokeRequired)
+            SafeUpdate(() => logTextBox.AppendText($"{DateTime.Now}: {message}\r\n"));
+        }
+
+        public void SafeUpdate(Action updateAction)
+        {
+            if (InvokeRequired)
             {
-                logTextBox.Invoke(new Action(() =>
-                {
-                    logTextBox.AppendText($"{DateTime.Now}: {message}\r\n");
-                }));
+                Invoke(updateAction);
             }
             else
             {
-                logTextBox.AppendText($"{DateTime.Now}: {message}\r\n");
+                updateAction();
             }
         }
 
@@ -796,8 +1125,7 @@ namespace NetworkDetector
             get
             {
                 CreateParams cp = base.CreateParams;
-                // CS_NOCLOSE = 0x200 to disable close button
-                cp.ClassStyle |= 0x200;
+                cp.ClassStyle |= 0x200; // CS_NOCLOSE to disable close button
                 return cp;
             }
         }
@@ -808,50 +1136,133 @@ namespace NetworkDetector
 
             if (this.WindowState == FormWindowState.Minimized)
             {
-                Hide(); // Minimizes to tray
+                Hide();
             }
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == WM_TASKBARCREATED)
+            {
+                RecreateNotifyIcon();
+            }
+            base.WndProc(ref m);
+        }
+
+        private void RecreateNotifyIcon()
+        {
+            if (notifyIcon != null)
+            {
+                notifyIcon.Dispose();
+            }
+
+            notifyIcon = new NotifyIcon
+            {
+                Icon = this.Icon,
+                Text = "Network Detector",
+                ContextMenuStrip = contextMenu,
+                Visible = true
+            };
         }
 
         #endregion
 
-        private async void button5_Click(object sender, EventArgs e)
+        private async void SpeedTest()
         {
-            // Instantiate the winget manager.
-            WingetManager wingetManager = new WingetManager();
-
-            // Define the list of programs you want to check and uninstall.
-            string[] programsToUninstall = { 
-                "Microsoft OneNote - en-us", 
-                "Microsoft OneNote - de-de", 
-                "Microsoft OneNote - fr-fr",
-                "Microsoft OneNote - nl-nl",
-                "Microsoft OneNote - it-it" 
-            };
-
-            foreach (string program in programsToUninstall)
+            try
             {
-                try
+                SystemData systemInfo = _systemData;
+                string speedtestPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "speedtest.exe");
+
+                if (!File.Exists(speedtestPath))
                 {
-                    bool isInstalled = await wingetManager.IsProgramInstalledAsync(program);
+                    LogError($"Speedtest CLI not found at: {speedtestPath}");
+                    return;
+                }
 
-                    if (isInstalled)
+                LogError("Starting speed test...");
+
+                ProcessStartInfo psi = new ProcessStartInfo
+                {
+                    FileName = speedtestPath,
+                    Arguments = "--accept-license --accept-gdpr --format=json",
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using (Process process = new Process { StartInfo = psi })
+                {
+                    process.Start();
+
+                    string result = await process.StandardOutput.ReadToEndAsync();
+                    await process.WaitForExitAsync();
+
+                    LogError("Speed test completed successfully.");
+
+                    // Parse JSON response
+                    JObject json = JObject.Parse(result);
+                    double downloadSpeed = json["download"]["bandwidth"].ToObject<double>() * 8 / 1_000_000;
+                    double uploadSpeed = json["upload"]["bandwidth"].ToObject<double>() * 8 / 1_000_000;
+                    double ping = json["ping"]["latency"].ToObject<double>();
+
+                    LogError($"Speed test results: Download = {downloadSpeed} Mbps, Upload = {uploadSpeed} Mbps, Ping = {ping} ms.");
+                    LogError("Sending speed test data to database...");
+
+                    await Task.Run(() => SaveSpeedTestToDatabase(systemInfo, downloadSpeed, uploadSpeed, ping));
+
+                    LogError("Speed test data sent to database successfully.");
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError($"Error in SpeedTest: {ex.Message}");
+            }
+        }
+
+        private void SaveSpeedTestToDatabase(SystemData systemInfo, double download, double upload, double ping)
+        {
+            try
+            {
+                LogError("Attempting to save speed test data to database...");
+
+                string connectionString = ConfigurationManager.ConnectionStrings["SQL"]?.ConnectionString;
+
+                using (SqlConnection conn = new SqlConnection(connectionString))
+                {
+                    string query = @"
+                MERGE INTO SpeedTestResults AS target
+                USING (SELECT @MachineName AS MachineName) AS source
+                ON target.MachineName = source.MachineName
+                WHEN MATCHED THEN 
+                    UPDATE SET 
+                        Location = @Location,
+                        DownloadSpeed = @DownloadSpeed,
+                        UploadSpeed = @UploadSpeed,
+                        Ping = @Ping
+                WHEN NOT MATCHED THEN 
+                    INSERT (MachineName, Location, DownloadSpeed, UploadSpeed, Ping) 
+                    VALUES (@MachineName, @Location, @DownloadSpeed, @UploadSpeed, @Ping);";
+
+                    using (SqlCommand cmd = new SqlCommand(query, conn))
                     {
-                        logTextBox.AppendText($"Uninstalling {program}...\r\n");
+                        cmd.Parameters.AddWithValue("@MachineName", systemInfo.MachineName);
+                        cmd.Parameters.AddWithValue("@Location", systemInfo.Location ?? "Unknown");
+                        cmd.Parameters.AddWithValue("@DownloadSpeed", Math.Round(download, 2));
+                        cmd.Parameters.AddWithValue("@UploadSpeed", Math.Round(upload, 2));
+                        cmd.Parameters.AddWithValue("@Ping", Math.Round(ping, 2));
 
-                        await wingetManager.UninstallProgramAsync(program);
-
-                        logTextBox.AppendText($"{program} uninstalled.\r\n");
-                    }
-                    else
-                    {
-                        logTextBox.AppendText($"{program} is not installed.\r\n");
+                        conn.Open();
+                        cmd.ExecuteNonQuery();
                     }
                 }
-                catch (Exception ex)
-                {
 
-                    logTextBox.AppendText($"Error uninstalling {program}: {ex.Message}\r\n");
-                }
+                LogError("Speed test data saved to database successfully.");
+            }
+            catch (Exception ex)
+            {
+                // Log the exception or handle it as needed.
+                LogError($"Error saving speed test data: {ex.Message}");
             }
         }
     }
