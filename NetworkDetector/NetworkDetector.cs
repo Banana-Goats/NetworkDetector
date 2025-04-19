@@ -23,7 +23,7 @@ using System.Runtime.InteropServices;
 using System.Collections.Concurrent;
 using System.Data;
 using static System.Windows.Forms.VisualStyles.VisualStyleElement;
-
+using NetworkDetector.Services.Interfaces;
 
 
 namespace NetworkDetector
@@ -70,9 +70,19 @@ namespace NetworkDetector
 
         private static ConcurrentDictionary<string, Task> activeDownloadTasks = new ConcurrentDictionary<string, Task>();
 
-        public NetworkDetector()
+        private readonly INetworkInfoService _networkInfo;
+        private readonly IHardwareInfoService _hardwareInfo;
+        private readonly ISharePointService _sharePoint;
+
+        public NetworkDetector(INetworkInfoService networkInfo,
+        IHardwareInfoService hardwareInfo,
+        ISharePointService sharePoint)
         {
             InitializeComponent();
+
+            _networkInfo = networkInfo;
+            _hardwareInfo = hardwareInfo;
+            _sharePoint = sharePoint;
 
             _hourlyTaskName = ConfigurationManager.AppSettings["HourlyTaskName"];
             _baseUrl = ConfigurationManager.AppSettings["BananaGoatsBaseUrl"];
