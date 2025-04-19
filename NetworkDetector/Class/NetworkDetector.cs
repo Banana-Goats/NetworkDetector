@@ -315,8 +315,7 @@ namespace NetworkDetector
             string windowsOS = _systemData.WindowsOS;
             string buildNumber = _systemData.BuildNumber;
 
-            string version = _versionNumber;
-            string pendingUpdates = string.IsNullOrWhiteSpace(_systemData.PendingUpdates) ? "Failed" : _systemData.PendingUpdates;
+            string version = _versionNumber;            
             string lastSharePointFile = string.IsNullOrWhiteSpace(_systemData.LatestSharePointFileDate) ? "Failed" : _systemData.LatestSharePointFileDate;
             string clientVersion = Version.Text;
 
@@ -333,7 +332,6 @@ namespace NetworkDetector
                     OS = @OS,
                     OS_Version = @OS_Version,
                     Client_Version = @Client_Version,
-                    OS_Updates = @OS_Updates,
                     Sharepoint_Sync = @Sharepoint_Sync,
                     Mobile = @Mobile,
                     Pulse_Time = GETDATE()
@@ -352,7 +350,6 @@ namespace NetworkDetector
                     { "@OS", _systemData.WindowsOS ?? "Unknown OS" },
                     { "@OS_Version", _systemData.BuildNumber ?? "Unknown Build" },
                     { "@Client_Version", clientVersion ?? "Unknown Client Version" },
-                    { "@OS_Updates", _systemData.PendingUpdates ?? "None" },
                     { "@Sharepoint_Sync", _systemData.LatestSharePointFileDate ?? "No Date" },
                     { "@Mobile", _systemData.Mobile }
                 };
@@ -368,12 +365,12 @@ namespace NetworkDetector
                 INSERT INTO TBPC 
                 (
                     Name, Store, CPU, Ram, HHD, IP, ISP, OS, OS_Version, 
-                    Client_Version, OS_Updates, Sharepoint_Sync, Mobile, Pulse_Time
+                    Client_Version, Sharepoint_Sync, Mobile, Pulse_Time
                 )
                 VALUES 
                 (
                     @Name, @Store, @CPU, @Ram, @HHD, @IP, @ISP, @OS, @OS_Version, 
-                    @Client_Version, @OS_Updates, @Sharepoint_Sync, @Mobile, GETDATE()
+                    @Client_Version, @Sharepoint_Sync, @Mobile, GETDATE()
                 );";
 
                     int insertRows = await _databaseService.ExecuteNonQueryAsync(insertQuery, parameters).ConfigureAwait(false);

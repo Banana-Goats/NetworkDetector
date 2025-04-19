@@ -15,7 +15,6 @@
 
     // Additional fields
     public string LatestSharePointFileDate { get; set; }
-    public string PendingUpdates { get; set; }
 
     // You can add more properties as needed, for example:
     public string Location { get; set; }

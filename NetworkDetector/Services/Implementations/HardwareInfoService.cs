@@ -90,7 +90,7 @@ namespace NetworkDetector.Services.Implementations
                 ulong totalBytes = comp.TotalPhysicalMemory;
                 // Convert to GB
                 double gb = totalBytes / 1024d / 1024d / 1024d;
-                return $"{gb:0.##} GB";
+                return $"{gb:0} GB";
             }
             catch
             {
