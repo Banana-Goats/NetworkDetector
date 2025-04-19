@@ -64,7 +64,6 @@
             storenametxt = new TextBox();
             latestFileDateTextBox = new TextBox();
             label1 = new Label();
-            pendingUpdatesTextBox = new TextBox();
             logTextBox = new TextBox();
             panel1.SuspendLayout();
             SuspendLayout();
@@ -318,7 +317,6 @@
             panel1.Controls.Add(label5);
             panel1.Controls.Add(label1);
             panel1.Controls.Add(Version);
-            panel1.Controls.Add(pendingUpdatesTextBox);
             panel1.Controls.Add(machineNameTextBox);
             panel1.Controls.Add(storageInfoTextBox);
             panel1.Controls.Add(label11);
@@ -346,10 +344,10 @@
             textBox1.BackColor = Color.FromArgb(46, 51, 73);
             textBox1.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
             textBox1.ForeColor = SystemColors.Control;
-            textBox1.Location = new Point(30, 214);
+            textBox1.Location = new Point(302, 122);
             textBox1.Name = "textBox1";
             textBox1.ReadOnly = true;
-            textBox1.Size = new Size(89, 23);
+            textBox1.Size = new Size(185, 23);
             textBox1.TabIndex = 35;
             textBox1.TextAlign = HorizontalAlignment.Center;
             // 
@@ -509,20 +507,9 @@
             label1.ForeColor = SystemColors.Control;
             label1.Location = new Point(495, 125);
             label1.Name = "label1";
-            label1.Size = new Size(59, 15);
+            label1.Size = new Size(51, 15);
             label1.TabIndex = 26;
-            label1.Text = ": Updates";
-            // 
-            // pendingUpdatesTextBox
-            // 
-            pendingUpdatesTextBox.BackColor = Color.FromArgb(46, 51, 73);
-            pendingUpdatesTextBox.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
-            pendingUpdatesTextBox.ForeColor = SystemColors.Control;
-            pendingUpdatesTextBox.Location = new Point(301, 122);
-            pendingUpdatesTextBox.Name = "pendingUpdatesTextBox";
-            pendingUpdatesTextBox.Size = new Size(186, 23);
-            pendingUpdatesTextBox.TabIndex = 25;
-            pendingUpdatesTextBox.TextAlign = HorizontalAlignment.Center;
+            label1.Text = ": Mobile";
             // 
             // logTextBox
             // 

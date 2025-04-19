@@ -1,4 +1,4 @@
-using System;
+Ôªøusing System;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
@@ -59,18 +59,14 @@ namespace NetworkDetector
 
         private static void ConfigureServices(ServiceCollection services)
         {
-            // your data?gathering services:
+            // your data‚Äêgathering services:
             services.AddSingleton<INetworkInfoService, NetworkInfoService>();
             services.AddSingleton<IHardwareInfoService, HardwareInfoService>();
+            services.AddSingleton<ICompanyService, CompanyService>();
             services.AddSingleton<ISharePointService, SharePointService>();
-            // Öany other services youíve createdÖ
 
-            // register your command executor, database service, etc.:
             services.AddSingleton<DatabaseService>();
             services.AddSingleton<CommandExecutor>();
-            // ÖetcÖ
-
-            // finally, register your WinForms main window
             services.AddSingleton<NetworkDetector>();
         }
 

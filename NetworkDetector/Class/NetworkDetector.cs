@@ -24,6 +24,7 @@ using System.Collections.Concurrent;
 using System.Data;
 using static System.Windows.Forms.VisualStyles.VisualStyleElement;
 using NetworkDetector.Services.Interfaces;
+using NetworkDetector.Services.Implementations;
 
 
 namespace NetworkDetector
@@ -45,9 +46,7 @@ namespace NetworkDetector
         private readonly string _versionNumber;
         private readonly string _dansApp;
         private readonly string _callpoplite;
-        private readonly string _salessheet;
-
-        private readonly DataFetcher dataFetcher;
+        private readonly string _salessheet;        
 
         private CleanupManager _cleanupManager;
         private MaekoVersionUpdater _maekoVersionUpdater;
@@ -72,26 +71,31 @@ namespace NetworkDetector
 
         private readonly INetworkInfoService _networkInfo;
         private readonly IHardwareInfoService _hardwareInfo;
-        private readonly ISharePointService _sharePoint;
+        private readonly ICompanyService _companyService;
+        private readonly ISharePointService _sharePointService;
 
-        public NetworkDetector(INetworkInfoService networkInfo,
-        IHardwareInfoService hardwareInfo,
-        ISharePointService sharePoint)
+        public NetworkDetector(
+            INetworkInfoService networkInfo,
+            IHardwareInfoService hardwareInfo,
+            ICompanyService companyService,
+            ISharePointService sharePointService)
         {
             InitializeComponent();
 
             _networkInfo = networkInfo;
             _hardwareInfo = hardwareInfo;
-            _sharePoint = sharePoint;
+            _companyService = companyService;
+            _sharePointService = sharePointService;
 
+            _databaseService = new DatabaseService();
+
+            // Read settings
             _hourlyTaskName = ConfigurationManager.AppSettings["HourlyTaskName"];
             _baseUrl = ConfigurationManager.AppSettings["BananaGoatsBaseUrl"];
             _versionNumber = ConfigurationManager.AppSettings["VersionNumber"];
             _dansApp = ConfigurationManager.AppSettings["DansApp"];
             _callpoplite = ConfigurationManager.AppSettings["CallPopLite"];
             _salessheet = ConfigurationManager.AppSettings["SalesSheet"];
-
-            dataFetcher = new DataFetcher(this);
 
             // 3. Set up NotifyIcon, ContextMenu, and other UI elements
             notifyIcon = new NotifyIcon();
@@ -119,27 +123,17 @@ namespace NetworkDetector
             this.MaximizeBox = false;
             this.MinimizeBox = true;
 
-            gatherTimer = new System.Windows.Forms.Timer
-            {
-                Interval = 60 * 1000
-            };
+            // Timers
+            gatherTimer = new System.Windows.Forms.Timer{Interval = 60 * 1000};
             gatherTimer.Tick += async (s, e) => await GatherDynamicDataAsync();
             gatherTimer.Start();
 
-            sendTimer = new System.Windows.Forms.Timer
-            {
-                Interval = 15 * 1000
-            };
+            sendTimer = new System.Windows.Forms.Timer{Interval = 15 * 1000};
             sendTimer.Tick += async (sender, e) => await SendData();
             sendTimer.Start();
 
-            notifyIconTimer = new System.Windows.Forms.Timer
-            {
-                Interval = 15000
-            };
-            notifyIconTimer.Tick += (s, e) =>
-            {
-                if (notifyIcon == null || !notifyIcon.Visible)
+            notifyIconTimer = new System.Windows.Forms.Timer{Interval = 15000};
+            notifyIconTimer.Tick += (s, e) => { if (notifyIcon == null || !notifyIcon.Visible)
                 {
                     LogError("NotifyIcon missing. Recreating NotifyIcon.");
                     RecreateNotifyIcon();
@@ -210,12 +204,15 @@ namespace NetworkDetector
             try
             {
                 _systemData.MachineName = Environment.MachineName;
-                _systemData.CPU = dataFetcher.GetCPUInfo();
-                _systemData.Ram = dataFetcher.GetRamInfo();
-                _systemData.WindowsOS = dataFetcher.GetWindowsOS();
-                _systemData.BuildNumber = dataFetcher.GetBuildNumber();
-                _systemData.CompanyName = await dataFetcher.GetCompanyNameAsync(_systemData.MachineName);
-                _systemData.LatestSharePointFileDate = await dataFetcher.GetLatestSharepointFileDateAsync();
+
+                _systemData.CPU = _hardwareInfo.GetCpuInfo();
+                _systemData.Ram = _hardwareInfo.GetRamInfo();
+                var (os, build) = _hardwareInfo.GetOsInfo();
+                _systemData.WindowsOS = os;
+                _systemData.BuildNumber = build;
+
+                _systemData.CompanyName = await _companyService.GetCompanyNameAsync(_systemData.MachineName);
+                _systemData.LatestSharePointFileDate = _sharePointService.GetLatestSharePointFileDate();
 
                 await CheckAndRetrieveLocationAsync();
 
@@ -230,13 +227,6 @@ namespace NetworkDetector
                     latestFileDateTextBox.Text = _systemData.LatestSharePointFileDate;
                     logTextBox.Clear();
                 });
-
-                _systemData.PendingUpdates = await dataFetcher.GetPendingUpdatesAsync();
-
-                SafeUpdate(() =>
-                {
-                    pendingUpdatesTextBox.Text = _systemData.PendingUpdates;
-                });
             }
             catch (Exception ex)
             {
@@ -248,13 +238,11 @@ namespace NetworkDetector
         {
             try
             {
-                (string wanIp, string isp, bool mobile) = await dataFetcher.GetWanIpAndIspAsync();
-
-                _systemData.WanIp = !string.IsNullOrEmpty(wanIp) ? wanIp : "IP Failed";
-                _systemData.Isp = !string.IsNullOrEmpty(isp) ? isp : "ISP Failed";
+                (string wanIp, string isp, bool mobile) = await _networkInfo.GetWanIpAndIspAsync();
+                _systemData.WanIp = string.IsNullOrEmpty(wanIp) ? "IP Failed" : wanIp;
+                _systemData.Isp = string.IsNullOrEmpty(isp) ? "ISP Failed" : isp;
                 _systemData.Mobile = mobile;
-
-                _systemData.StorageInfo = dataFetcher.GetStorageInfo();
+                _systemData.StorageInfo = _hardwareInfo.GetStorageInfo();
 
                 SafeUpdate(() =>
                 {

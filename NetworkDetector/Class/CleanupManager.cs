@@ -11,9 +11,7 @@ namespace NetworkDetector
         private readonly TextBox _logTextBox;
         private readonly Timer _cleanupTimer;
 
-        /// <summary>
-        /// Exposes the underlying timer interval for easy customization.
-        /// </summary>
+
         public int CleanupInterval
         {
             get => _cleanupTimer.Interval;
@@ -34,17 +32,6 @@ namespace NetworkDetector
         {
             _cleanupTimer.Start();
         }
-
-        public void StopCleanup()
-        {
-            _cleanupTimer.Stop();
-        }
-
-        public void RunCleanupNow()
-        {
-            CleanupTimer_Tick(null, EventArgs.Empty);
-        }
-
 
         private void CleanupTimer_Tick(object sender, EventArgs e)
         {
