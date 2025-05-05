@@ -36,7 +36,6 @@
             label13 = new Label();
             buildNumberTextBox = new TextBox();
             windowsOsTextBox = new TextBox();
-            button3 = new Button();
             label9 = new Label();
             label10 = new Label();
             label11 = new Label();
@@ -149,20 +148,6 @@
             windowsOsTextBox.Size = new Size(186, 23);
             windowsOsTextBox.TabIndex = 20;
             windowsOsTextBox.TextAlign = HorizontalAlignment.Center;
-            // 
-            // button3
-            // 
-            button3.BackColor = Color.FromArgb(46, 51, 73);
-            button3.FlatStyle = FlatStyle.Flat;
-            button3.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
-            button3.ForeColor = SystemColors.Control;
-            button3.Location = new Point(299, 252);
-            button3.Name = "button3";
-            button3.Size = new Size(88, 23);
-            button3.TabIndex = 18;
-            button3.Text = "Send";
-            button3.UseVisualStyleBackColor = false;
-            button3.Click += SendButton_Click;
             // 
             // label9
             // 
@@ -282,7 +267,7 @@
             Version.Name = "Version";
             Version.Size = new Size(66, 23);
             Version.TabIndex = 0;
-            Version.Text = "9.3.4";
+            Version.Text = "9.3.5";
             Version.TextAlign = HorizontalAlignment.Center;
             // 
             // button4
@@ -326,7 +311,6 @@
             panel1.Controls.Add(label9);
             panel1.Controls.Add(label4);
             panel1.Controls.Add(label3);
-            panel1.Controls.Add(button3);
             panel1.Controls.Add(label12);
             panel1.Controls.Add(label2);
             panel1.Controls.Add(label13);
@@ -559,8 +543,6 @@
         private TextBox storageInfoTextBox;
         private TextBox ramInfoTextBox;
         private TextBox cpuInfoTextBox;
-        
-        private Button button3;
         private Label label12;
         private Label label13;
         private TextBox buildNumberTextBox;

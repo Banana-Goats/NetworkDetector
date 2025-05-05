@@ -1,5 +1,6 @@
 ﻿using System;
-using System.Configuration;        // <— for ConfigurationManager
+using System.Collections.Generic;
+using System.Data;
 using System.Net.Http;
 using System.Threading.Tasks;
 using NetworkDetector.Services.Interfaces;
@@ -11,29 +12,82 @@ namespace NetworkDetector.Services.Implementations
     {
         private static readonly HttpClient _client = new HttpClient();
 
-        // Read these once, at startup
-        private readonly string _baseUrl = ConfigurationManager.AppSettings["IpApiBaseUrl"];
-        private readonly string _apiKey = ConfigurationManager.AppSettings["IpApiKey"];
-        private readonly string _apiFields = ConfigurationManager.AppSettings["IpApiFields"];
+        private readonly DatabaseService _db;
+        private bool _initialized;
+
+        private string _baseUrl;
+        private string _apiKey;
+        private string _apiFields;
+
+        public NetworkInfoService(DatabaseService db)
+        {
+            _db = db ?? throw new ArgumentNullException(nameof(db));
+        }
+
+        public async Task InitializeAsync()
+        {
+            const string sql = @"
+                SELECT Config, Value
+                  FROM Config.AppConfigs
+                 WHERE Application = @appName
+                   AND Config IN ('IpApiBaseUrl','IpApiKey','IpApiFields')";
+
+            var dt = await _db.ExecuteQueryAsync(sql, new Dictionary<string, object>
+            {
+                ["@appName"] = "Network Detector"
+            }).ConfigureAwait(false);
+
+            foreach (DataRow row in dt.Rows)
+            {
+                var name = row.Field<string>("Config");
+                var value = row.Field<string>("Value");
+
+                switch (name)
+                {
+                    case "IpApiBaseUrl":
+                        _baseUrl = value;
+                        break;
+                    case "IpApiKey":
+                        _apiKey = value;
+                        break;
+                    case "IpApiFields":
+                        _apiFields = value;
+                        break;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(_baseUrl)
+             || string.IsNullOrWhiteSpace(_apiKey)
+             || string.IsNullOrWhiteSpace(_apiFields))
+            {
+                throw new InvalidOperationException(
+                    "Missing one or more IP-API settings for 'Network Detector' in database");
+            }
+
+            _initialized = true;
+        }
 
         public async Task<(string Ip, string Isp, bool Mobile)> GetWanIpAndIspAsync()
         {
+            if (!_initialized)
+                throw new InvalidOperationException(
+                    "NetworkInfoService not initialized. Call InitializeAsync() before use.");
+
             try
             {
-                // Compose URL from config
                 var url = $"{_baseUrl}?key={_apiKey}&fields={_apiFields}";
-                string response = await _client.GetStringAsync(url);
+                var response = await _client.GetStringAsync(url).ConfigureAwait(false);
                 var json = JObject.Parse(response);
 
-                string ip = json["query"]?.ToString();
-                string isp = json["isp"]?.ToString();
-                bool mobile = json["mobile"]?.ToObject<bool>() ?? false;
+                var ip = json["query"]?.ToString();
+                var isp = json["isp"]?.ToString();
+                var mobile = json["mobile"]?.ToObject<bool>() ?? false;
 
                 return (ip, isp, mobile);
             }
             catch (Exception)
             {
-                // You may want to log ex here
+                // consider logging the exception
                 return (null, null, false);
             }
         }

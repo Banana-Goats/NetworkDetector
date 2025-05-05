@@ -457,10 +457,6 @@ namespace NetworkDetector
             }
         }
 
-        private async void SendButton_Click(object sender, EventArgs e)
-        {
-            SendData();
-        }
 
         #endregion
 
@@ -612,6 +608,8 @@ namespace NetworkDetector
             await CheckAndResetColumnAsync(machineName, "SalesSheet", _salessheet, "Sales Sheet");
             await CheckAndDownloadFormRefreshAsync(machineName);
             await CheckAndRunCommandsAsync(machineName);
+
+            SendData();
         }
 
         private void button9_Click(object sender, EventArgs e)
