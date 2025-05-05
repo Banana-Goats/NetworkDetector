@@ -60,11 +60,8 @@ namespace NetworkDetector
         private static void ConfigureServices(ServiceCollection services)
         {
             services.AddSingleton<DatabaseService>();
-
-            services.AddSingleton<INetworkInfoService>(sp =>
-            {
-                var db = sp.GetRequiredService<DatabaseService>();
-                var svc = new NetworkInfoService(db);
+            services.AddSingleton<INetworkInfoService>(sp => {
+                var svc = new NetworkInfoService(sp.GetRequiredService<DatabaseService>());
                 svc.InitializeAsync().GetAwaiter().GetResult();
                 return svc;
             });
@@ -75,7 +72,6 @@ namespace NetworkDetector
             services.AddSingleton<ICompanyService, CompanyService>();
             services.AddSingleton<ISharePointService, SharePointService>();
 
-            services.AddSingleton<DatabaseService>();
             services.AddSingleton<CommandExecutor>();
             services.AddSingleton<NetworkDetector>();
         }
