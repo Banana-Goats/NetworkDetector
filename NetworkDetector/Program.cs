@@ -65,7 +65,6 @@ namespace NetworkDetector
             {
                 var db = sp.GetRequiredService<DatabaseService>();
                 var svc = new NetworkInfoService(db);
-                // synchronously block so it's loaded at startup
                 svc.InitializeAsync().GetAwaiter().GetResult();
                 return svc;
             });
